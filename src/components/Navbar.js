@@ -1,109 +1,38 @@
-import React, { useState } from "react";
+import { Link, useLocation } from "react-router-dom";
 
-const Navbar = ({ activeTab, setActiveTab }) => {
-  const [isOpen, setIsOpen] = useState(false);
+const Navbar = () => {
+  const location = useLocation();
 
-  const handleTabClick = (tab) => {
-    setActiveTab(tab);
-    setIsOpen(false);
-  };
+  const linkStyle = (path) => ({
+    color: location.pathname === path ? "#FFD700" : "#fff",
+    textDecoration: "none",
+    fontSize: "18px",
+    fontWeight: "600",
+    padding: "8px 16px",
+    borderRadius: "8px",
+    backgroundColor: location.pathname === path ? "rgba(255, 215, 0, 0.2)" : "transparent",
+    transition: "0.3s",
+  });
 
   return (
-    <nav style={{ background: "#6C63FF", padding: "10px 20px", color: "#fff" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <h2 style={{ margin: 0, cursor: "pointer" }} onClick={() => handleTabClick("home")}>
-          MySite
-        </h2>
-        <div style={{ display: "flex", alignItems: "center" }}>
-          <div className="desktop-menu" style={{ display: "flex", gap: "20px" }}>
-            <button
-              onClick={() => handleTabClick("home")}
-              style={{
-                background: "transparent",
-                border: "none",
-                color: "#fff",
-                cursor: "pointer",
-                fontWeight: activeTab === "home" ? "bold" : "normal"
-              }}
-            >
-              Home
-            </button>
-            <button
-              onClick={() => handleTabClick("services")}
-              style={{
-                background: "transparent",
-                border: "none",
-                color: "#fff",
-                cursor: "pointer",
-                fontWeight: activeTab === "services" ? "bold" : "normal"
-              }}
-            >
-              Services
-            </button>
-            <button
-              onClick={() => handleTabClick("tools")}
-              style={{
-                background: "transparent",
-                border: "none",
-                color: "#fff",
-                cursor: "pointer",
-                fontWeight: activeTab === "tools" ? "bold" : "normal"
-              }}
-            >
-              도구
-            </button>
-            <button
-              onClick={() => handleTabClick("contact")}
-              style={{
-                background: "transparent",
-                border: "none",
-                color: "#fff",
-                cursor: "pointer",
-                fontWeight: activeTab === "contact" ? "bold" : "normal"
-              }}
-            >
-              Contact
-            </button>
-          </div>
-          <button
-            onClick={() => setIsOpen(!isOpen)}
-            style={{
-              marginLeft: "20px",
-              background: "transparent",
-              border: "none",
-              color: "#fff",
-              fontSize: "20px",
-              cursor: "pointer"
-            }}
-          >
-            ☰
-          </button>
-        </div>
-      </div>
-
-      {isOpen && (
-        <div
-          style={{
-            marginTop: "10px",
-            display: "flex",
-            flexDirection: "column",
-            gap: "10px"
-          }}
-        >
-          <button onClick={() => handleTabClick("home")} style={{ background: "#fff", border: "none", padding: "10px", borderRadius: "6px", cursor: "pointer" }}>
-            Home
-          </button>
-          <button onClick={() => handleTabClick("services")} style={{ background: "#fff", border: "none", padding: "10px", borderRadius: "6px", cursor: "pointer" }}>
-            Services
-          </button>
-          <button onClick={() => handleTabClick("tools")} style={{ background: "#fff", border: "none", padding: "10px", borderRadius: "6px", cursor: "pointer" }}>
-            도구
-          </button>
-          <button onClick={() => handleTabClick("contact")} style={{ background: "#fff", border: "none", padding: "10px", borderRadius: "6px", cursor: "pointer" }}>
-            Contact
-          </button>
-        </div>
-      )}
+    <nav
+      style={{
+        background: "#222",
+        padding: "12px 20px",
+        display: "flex",
+        justifyContent: "center",
+        gap: "20px",
+        position: "sticky",
+        top: 0,
+        zIndex: 100,
+        boxShadow: "0 2px 10px rgba(0,0,0,0.3)",
+      }}
+    >
+      <Link style={linkStyle("/")} to="/">홈</Link>
+      <Link style={linkStyle("/content")} to="/content">컨텐츠</Link>
+      <Link style={linkStyle("/review")} to="/review">리뷰</Link>
+      <Link style={linkStyle("/problem")} to="/problem">문제</Link>
+      <Link style={linkStyle("/services")} to="/services">서비스</Link>
     </nav>
   );
 };

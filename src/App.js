@@ -1,31 +1,24 @@
-import React, { useState } from "react";
+import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
 import Navbar from "./components/Navbar";
 import Home from "./pages/Home";
+import Content from "./pages/Content";
+import Review from "./pages/Review";
+import Problem from "./pages/Problem";
 import Services from "./pages/Services";
-import Contact from "./pages/Contact";
 
-const App = () => {
-  const [activeTab, setActiveTab] = useState("home");
-
-  const renderContent = () => {
-    switch (activeTab) {
-      case "home":
-        return <Home />;
-      case "services":
-        return <Services />;
-      case "contact":
-        return <Contact />;
-      default:
-        return <Home />;
-    }
-  };
-
+function App() {
   return (
-    <div>
-      <Navbar activeTab={activeTab} setActiveTab={setActiveTab} />
-      <div style={{ padding: "20px" }}>{renderContent()}</div>
-    </div>
+    <Router>
+      <Navbar />
+      <Routes>
+        <Route path="/" element={<Home />} />
+        <Route path="/content" element={<Content />} />
+        <Route path="/review" element={<Review />} />
+        <Route path="/problem" element={<Problem />} />
+        <Route path="/services" element={<Services />} />
+      </Routes>
+    </Router>
   );
-};
+}
 
 export default App;
