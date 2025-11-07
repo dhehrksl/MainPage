@@ -8,7 +8,11 @@ const Services = () => {
   const [numSimilars, setNumSimilars] = useState(5);
   const [error, setError] = useState("");
 
+<<<<<<< HEAD
   // 📂 엑셀 업로드 핸들러
+=======
+  // 🔹 엑셀 업로드
+>>>>>>> c105bd6a4f7cbf87e924c64efa5e961abd6d16b6
   const handleFileUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -32,6 +36,7 @@ const Services = () => {
     reader.readAsArrayBuffer(file);
   };
 
+<<<<<<< HEAD
   // 🤖 AI 서버 호출 (유사 발화 생성)
   const generateSimilarTC = async () => {
     if (uploadedData.length === 0) {
@@ -96,6 +101,71 @@ const Services = () => {
       result.similars.forEach((s, i) => {
         row[`유사 발화 ${i + 1}`] = s;
       });
+=======
+  // 🔹 AI 호출하여 유사 TC 생성
+  const generateSimilarTC = async () => {
+    if (!uploadedData.length) return alert("엑셀을 업로드하세요!");
+    setLoading(true);
+
+    try {
+      const promises = uploadedData.map(async (row) => {
+        const baseText = row["대표 발화"] || row["대표발화"] || row["utterance"] || "";
+        if (!baseText.trim()) {
+          return { base: "(대표 발화 없음)", similars: Array(numSimilars).fill("(생성 실패)") };
+        }
+        try {
+          const resp = await fetch("http://localhost:5000/generate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text: baseText, numSimilars }),
+          });
+
+          console.log("서버 상태:", resp.status);
+
+          if (!resp.ok) throw new Error(`서버 상태: ${resp.status}`);
+
+          const data = await resp.json();
+          console.log("서버 응답 데이터:", data);
+
+          if (data.error) {
+            console.warn("서버 에러 메시지:", data.error);
+          }
+          return data;
+        } catch (err) {
+          console.error("서버 호출 오류:", err);
+          return { base: baseText, similars: Array(numSimilars).fill("(생성 실패)") };
+        }
+      });
+
+      const results = await Promise.all(promises);
+      setTcResults(results);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 🔹 테스트용 AI 호출 (엑셀 없이)
+  const generateTestTC = async () => {
+    setLoading(true);
+    try {
+      const resp = await fetch("http://localhost:5000/generate-test", { method: "POST" });
+      const data = await resp.json();
+      console.log("테스트 서버 응답:", data);
+      setTcResults([data]);
+    } catch (err) {
+      console.error("테스트 호출 오류:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 🔹 결과 엑셀 다운로드
+  const downloadExcel = () => {
+    if (!tcResults.length) return;
+    const exportData = tcResults.map((tc) => {
+      const row = { "대표 발화": tc.base };
+      tc.similars.forEach((s, i) => (row[`유사 발화 ${i + 1}`] = s));
+>>>>>>> c105bd6a4f7cbf87e924c64efa5e961abd6d16b6
       return row;
     });
 
@@ -129,6 +199,7 @@ const Services = () => {
       <input type="file" accept=".xlsx, .xls" onChange={handleFileUpload} />
       <br />
 
+<<<<<<< HEAD
       <div style={{ marginTop: 20 }}>
         <button
           onClick={generateSimilarTC}
@@ -159,6 +230,20 @@ const Services = () => {
         >
           결과 엑셀 다운로드
         </button>
+=======
+      <div style={{ marginTop: 12 }}>
+        <button onClick={generateSimilarTC} disabled={loading} style={{ marginRight: 8 }}>
+          {loading ? "생성중..." : "유사 TC 생성"}
+        </button>
+
+        <button onClick={generateTestTC} disabled={loading} style={{ marginRight: 8 }}>
+          테스트 발화 생성
+        </button>
+
+        <button onClick={downloadExcel} disabled={!tcResults.length}>
+          엑셀 다운로드
+        </button>
+>>>>>>> c105bd6a4f7cbf87e924c64efa5e961abd6d16b6
       </div>
 
       {error && (
