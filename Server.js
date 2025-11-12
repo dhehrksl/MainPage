@@ -142,12 +142,3 @@ app.post("/generate-test", (req, res) => {
 
 const port = process.env.PORT || 5000;
 app.listen(port, () => console.log(`🚀 서버가 ${port}번 포트에서 실행 중입니다.`));
-=======
-// 🔹 테스트용 엔드포인트
-app.post("/generate-test", async (req, res) => {
-  return res.json({ base: "테스트 발화", similars: ["유사 발화 1", "유사 발화 2", "유사 발화 3"] });
-});
-
-const port = process.env.PORT || 5000;
-app.listen(port, () => console.log(`🚀 Server running on port ${port}`));
->>>>>>> c105bd6a4f7cbf87e924c64efa5e961abd6d16b6
