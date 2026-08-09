@@ -196,7 +196,7 @@ app.post("/generate-test", (req, res) => {
 // 4-1) URL → TC 자동 생성 (Puppeteer + Gemini Vision)
 // ─────────────────────────────────────
 app.post("/api/tc-from-url", async (req, res) => {
-  const { url, numTCs = 10 } = req.body;
+  const { url, numTCs = 10, useScreenshot = false } = req.body;
 
   if (!url || typeof url !== "string") {
     return res.status(400).json({ error: "URL이 필요합니다." });
@@ -227,6 +227,8 @@ app.post("/api/tc-from-url", async (req, res) => {
       const txt = (el) => (el?.textContent || "").replace(/\s+/g, " ").trim();
       return {
         title: document.title,
+        metaDescription: document.querySelector('meta[name="description"]')?.content || "",
+        bodyTextSample: (document.body.innerText || "").replace(/\s+/g, " ").trim().slice(0, 800),
         headings: Array.from(document.querySelectorAll("h1, h2, h3"))
           .map((h) => ({ tag: h.tagName.toLowerCase(), text: txt(h) }))
           .filter((h) => h.text)
@@ -256,24 +258,33 @@ app.post("/api/tc-from-url", async (req, res) => {
     });
 
     // 스크린샷 (뷰포트만 — fullPage는 용량 큼)
-    const screenshotBase64 = await page.screenshot({
-      type: "png",
-      fullPage: false,
-      encoding: "base64",
-    });
+    // useScreenshot=false면 촬영을 건너뛰어 토큰(비용)을 크게 절약한다.
+    let screenshotBase64 = null;
+    if (useScreenshot) {
+      screenshotBase64 = await page.screenshot({
+        type: "png",
+        fullPage: false,
+        encoding: "base64",
+      });
+    }
 
     await browser.close();
     browser = null;
 
-    console.log(`페이지 수집 완료: title="${pageInfo.title}", buttons=${pageInfo.buttons.length}, inputs=${pageInfo.inputs.length}`);
+    console.log(`페이지 수집 완료: title="${pageInfo.title}", buttons=${pageInfo.buttons.length}, inputs=${pageInfo.inputs.length}, screenshot=${useScreenshot ? "포함" : "생략"}`);
 
     // Gemini 호출 (vision 지원 모델)
     const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash-lite" });
 
-    const prompt = `너는 숙련된 QA 엔지니어야. 첨부된 웹 페이지 스크린샷과 아래 구조 정보를 분석해서, 이 페이지의 기능을 검증하기 위한 테스트 케이스 ${numTCs}개를 생성해줘.
+    const sourceDesc = useScreenshot
+      ? "첨부된 웹 페이지 스크린샷과 아래 구조 정보를"
+      : "아래 웹 페이지 구조 정보를";
+    const prompt = `너는 숙련된 QA 엔지니어야. ${sourceDesc} 분석해서, 이 페이지의 기능을 검증하기 위한 테스트 케이스를 생성해줘. 최대 ${numTCs}개까지 만들 수 있지만, 이 아래 근거만으로 의미 있는 케이스가 그보다 적다면 억지로 개수를 채우지 말고 실제 근거가 있는 만큼만 생성해줘.
 
 URL: ${url}
 페이지 타이틀: ${pageInfo.title}
+메타 설명: ${pageInfo.metaDescription || "(없음)"}
+페이지 본문 텍스트 일부: ${pageInfo.bodyTextSample || "(추출 안됨)"}
 헤딩: ${JSON.stringify(pageInfo.headings)}
 버튼: ${JSON.stringify(pageInfo.buttons)}
 링크: ${JSON.stringify(pageInfo.links)}
@@ -281,10 +292,22 @@ URL: ${url}
 폼 개수: ${pageInfo.formCount}
 
 요구사항:
+- 반드시 위에 제공된 실제 요소(헤딩/버튼/링크/입력필드/본문 텍스트)에 근거해서만 작성할 것. 페이지에 없는 기능(예: 존재하지 않는 결제, 회원가입 등)을 상상해서 만들지 말 것.
+- description은 "1. ... 2. ... 3. ..." 형태로, 실제 버튼/입력 필드 이름을 그대로 인용하며 누가 봐도 똑같이 재현할 수 있는 구체적 조작 순서로 작성할 것. "정상적으로 동작하는지 확인한다" 같은 막연한 문장 금지.
+- expectedResult는 마지막 단계 수행 직후 화면에서 실제로 관찰 가능한 결과를 구체적으로 쓸 것 (예: "'이메일 형식이 올바르지 않습니다' 메시지가 입력창 아래 빨간 글씨로 표시된다")
 - 긍정 케이스, 부정 케이스(잘못된 입력 등), 경계값 케이스를 균형있게 섞을 것
 - 우선순위(priority)는 기능의 핵심도에 따라 High/Medium/Low로 판단 (로그인·결제 등 핵심 흐름은 High)
 - 카테고리(category)는 한국어로 페이지의 의미있는 분류명 작성 (예: 로그인, 회원가입, 검색, 네비게이션, 폼 검증, 접근성 등)
 - 제목은 "~을 확인한다" 형태의 한국어 한 줄
+
+예시 (형식 참고용 — 실제 케이스는 반드시 위에서 제공된 이 페이지의 실제 데이터에 근거해서 작성):
+{
+  "title": "이메일 형식이 아닌 값을 입력했을 때 에러 메시지 노출을 확인한다",
+  "description": "1. 이메일 입력란에 'abc123'을 입력한다\\n2. '로그인' 버튼을 클릭한다",
+  "expectedResult": "이메일 형식 오류 메시지가 입력란 하단에 표시되고 로그인이 진행되지 않는다",
+  "priority": "High",
+  "category": "로그인"
+}
 
 다음 JSON 형식으로만 응답해줘. 다른 설명이나 마크다운 코드블록 표시 없이 순수 JSON만:
 
@@ -292,7 +315,7 @@ URL: ${url}
   "testcases": [
     {
       "title": "TC 제목",
-      "description": "테스트 대상 및 수행 절차",
+      "description": "1. ... \\n2. ... \\n3. ...",
       "expectedResult": "기대 결과",
       "priority": "High",
       "category": "카테고리명"
@@ -300,12 +323,25 @@ URL: ${url}
   ]
 }`;
 
-    const result = await model.generateContent([
-      { text: prompt },
-      { inlineData: { mimeType: "image/png", data: screenshotBase64 } },
-    ]);
-    const rawText = (await result.response).text();
+    const parts = [{ text: prompt }];
+    if (useScreenshot && screenshotBase64) {
+      parts.push({ inlineData: { mimeType: "image/png", data: screenshotBase64 } });
+    }
+    const result = await model.generateContent(parts);
+    const response = await result.response;
+    const rawText = response.text();
     console.log("Gemini 응답 길이:", rawText.length);
+
+    // 토큰 사용량 출력 (모드별 비용 비교용)
+    const usage = response.usageMetadata;
+    if (usage) {
+      console.log(
+        `📊 토큰 사용량 [${useScreenshot ? "이미지 포함" : "텍스트만"}] ` +
+        `입력=${usage.promptTokenCount} / 출력=${usage.candidatesTokenCount} / 합계=${usage.totalTokenCount}`
+      );
+    } else {
+      console.log("📊 토큰 사용량: (응답에 usageMetadata 없음)");
+    }
 
     // JSON 파싱 (코드블록/여분 텍스트 제거)
     let parsed;

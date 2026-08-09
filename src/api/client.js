@@ -206,10 +206,10 @@ export const fetchUtterances = async () => {
 };
 
 // ───────── URL → TC 자동 생성 ─────────
-export const generateTCFromUrl = async (url, numTCs = 10) => {
+export const generateTCFromUrl = async (url, numTCs = 10, useScreenshot = false) => {
   return request("/api/tc-from-url", {
     method: "POST",
-    body: JSON.stringify({ url, numTCs }),
+    body: JSON.stringify({ url, numTCs, useScreenshot }),
   });
 };
 

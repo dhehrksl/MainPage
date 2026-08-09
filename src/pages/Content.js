@@ -33,6 +33,10 @@ const Content = () => {
   const [urlResult, setUrlResult] = useState(null); // { url, pageTitle, testcases, meta }
   const [selectedIdx, setSelectedIdx] = useState(new Set());
   const [numTCs, setNumTCs] = useState(10);
+  const [useScreenshot, setUseScreenshot] = useState(false); // 스크린샷(vision) 분석 포함 여부
+
+  // 테이블 행 다중 선택 상태 (tc.id 기준)
+  const [selectedRows, setSelectedRows] = useState(new Set());
 
   const reload = async () => {
     const { data, source } = await fetchTestcases();
@@ -75,8 +79,40 @@ const Content = () => {
   const handleDelete = async (id) => {
     if (window.confirm("이 TC를 삭제하시겠습니까?")) {
       await deleteTestcase(id);
+      setSelectedRows((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
       await reload();
     }
+  };
+
+  // 행 체크박스 토글
+  const toggleRow = (id) => {
+    setSelectedRows((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  // 현재 필터된 목록 전체 선택/해제
+  const toggleSelectAll = (ids) => {
+    setSelectedRows((prev) => {
+      const allSelected = ids.length > 0 && ids.every((id) => prev.has(id));
+      return allSelected ? new Set() : new Set(ids);
+    });
+  };
+
+  // 선택된 TC 일괄 삭제
+  const handleDeleteSelected = async () => {
+    if (selectedRows.size === 0) return;
+    if (!window.confirm(`선택한 ${selectedRows.size}개의 TC를 삭제하시겠습니까?`)) return;
+    await Promise.all([...selectedRows].map((id) => deleteTestcase(id)));
+    setSelectedRows(new Set());
+    await reload();
   };
 
   const handleStatusChange = async (id, status) => {
@@ -137,7 +173,7 @@ const Content = () => {
     setUrlResult(null);
 
     try {
-      const data = await generateTCFromUrl(url, numTCs);
+      const data = await generateTCFromUrl(url, numTCs, useScreenshot);
       setUrlResult(data);
       // 기본값으로 전체 선택
       setSelectedIdx(new Set(data.testcases.map((_, i) => i)));
@@ -226,6 +262,12 @@ const Content = () => {
           <Button $variant="secondary" onClick={reload} title="새로고침">
             <span className="material-icons" style={{ fontSize: 18 }}>refresh</span>
           </Button>
+          {selectedRows.size > 0 && (
+            <Button $variant="danger" onClick={handleDeleteSelected}>
+              <span className="material-icons" style={{ fontSize: 18 }}>delete_sweep</span>
+              선택 삭제 ({selectedRows.size})
+            </Button>
+          )}
         </Flex>
         <Flex $gap="10px" $wrap>
           <Button $variant="primary" onClick={() => { resetForm(); setShowForm(true); }}>
@@ -343,7 +385,7 @@ const Content = () => {
                   disabled={urlLoading}
                   style={{ minWidth: 90 }}
                 >
-                  {[5, 8, 10, 15, 20].map((n) => <option key={n} value={n}>{n}개</option>)}
+                  {[5, 8, 10, 15, 20, 30, 50].map((n) => <option key={n} value={n}>{n}개</option>)}
                 </Select>
                 <Button
                   $variant="primary"
@@ -353,6 +395,18 @@ const Content = () => {
                   {urlLoading ? "분석 중..." : "생성"}
                 </Button>
               </Flex>
+              <ScreenshotOption title="켜면 페이지 스크린샷까지 AI가 분석합니다(디자인·레이아웃 반영). 끄면 페이지 구조 텍스트만 분석해 토큰(비용)을 크게 절약합니다.">
+                <input
+                  type="checkbox"
+                  checked={useScreenshot}
+                  onChange={(e) => setUseScreenshot(e.target.checked)}
+                  disabled={urlLoading}
+                />
+                <span>
+                  스크린샷(이미지) 분석 포함
+                  <em>{useScreenshot ? " — 시각 분석 O, 토큰 더 사용" : " — 텍스트만 분석, 저렴(권장)"}</em>
+                </span>
+              </ScreenshotOption>
             </FormGroup>
 
             {urlError && (
@@ -366,7 +420,9 @@ const Content = () => {
               <div style={{ textAlign: "center", padding: "32px 0" }}>
                 <Spinner />
                 <p style={{ color: colors.textSecondary, fontSize: "0.85rem", marginTop: 8 }}>
-                  페이지 로딩 → 스크린샷 → AI 분석 중 (약 10~30초)
+                  {useScreenshot
+                    ? "페이지 로딩 → 스크린샷 → AI 분석 중 (약 10~30초)"
+                    : "페이지 로딩 → 구조 분석 → AI 분석 중 (약 10~20초)"}
                 </p>
               </div>
             )}
@@ -451,6 +507,14 @@ const Content = () => {
           <Table>
             <thead>
               <tr>
+                <th style={{ textAlign: "center", width: 40 }}>
+                  <input
+                    type="checkbox"
+                    checked={filtered.length > 0 && filtered.every((tc) => selectedRows.has(tc.id))}
+                    onChange={() => toggleSelectAll(filtered.map((tc) => tc.id))}
+                    title="전체 선택"
+                  />
+                </th>
                 <th>ID</th>
                 <th>TC명</th>
                 <th>카테고리</th>
@@ -462,6 +526,13 @@ const Content = () => {
             <tbody>
               {filtered.map((tc) => (
                 <tr key={tc.id}>
+                  <td style={{ textAlign: "center" }}>
+                    <input
+                      type="checkbox"
+                      checked={selectedRows.has(tc.id)}
+                      onChange={() => toggleRow(tc.id)}
+                    />
+                  </td>
                   <td style={{ fontFamily: "monospace", fontSize: "0.85rem" }}>{tc.id}</td>
                   <td style={{ fontWeight: 500 }}>{tc.title}</td>
                   <td>{tc.category || "-"}</td>
@@ -549,6 +620,23 @@ const FormGroup = styled.div`
     font-weight: 600;
     color: ${colors.textSecondary};
     margin-bottom: 6px;
+  }
+`;
+
+const ScreenshotOption = styled.label`
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: ${colors.text};
+  cursor: pointer;
+  input { cursor: pointer; }
+  em {
+    font-style: normal;
+    font-size: 0.78rem;
+    color: ${colors.textSecondary};
   }
 `;
 
@@ -641,6 +729,7 @@ const TcDesc = styled.p`
   font-size: 0.8rem;
   color: ${colors.textSecondary};
   line-height: 1.4;
+  white-space: pre-line;
 `;
 
 const SmallBtn = styled.button`
