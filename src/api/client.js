@@ -1,6 +1,7 @@
-// 백엔드 주소 — 다른 PC/폰에서 접속할 땐 PC의 LAN IP로 교체
-// 예: "http://192.168.0.10:5000"
-export const API_BASE = "http://localhost:5000";
+// 프론트와 같은 오리진(도메인/IP)으로 상대 경로 호출한다.
+// 로컬 개발 시엔 package.json의 "proxy" 설정이 이 요청들을 백엔드(5000번)로 넘겨준다.
+// 배포 환경에선 Nginx가 같은 방식으로 /api, /generate 등을 백엔드로 프록시한다.
+export const API_BASE = "";
 
 const readLS = (key, fallback = []) => {
   try { return JSON.parse(localStorage.getItem(key) || JSON.stringify(fallback)); }
