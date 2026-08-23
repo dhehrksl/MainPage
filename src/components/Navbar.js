@@ -1,17 +1,27 @@
-import { NavLink } from "react-router-dom";
+import { NavLink, useNavigate } from "react-router-dom";
 import styled from "styled-components";
 import { colors } from "../styles/theme";
+import { useAuth } from "../context/AuthContext";
 
 const NAV_ITEMS = [
   { to: "/", icon: "grid_view", label: "대시보드" },
   { to: "/services", icon: "smart_toy", label: "유사 발화 생성" },
   { to: "/content", icon: "checklist", label: "TC 관리" },
+  { to: "/generate-tc", icon: "auto_awesome", label: "URL→TC 생성" },
   { to: "/review", icon: "assessment", label: "QA 리포트" },
   { to: "/problem", icon: "bug_report", label: "버그 리포트" },
   { to: "/board", icon: "forum", label: "게시판" },
 ];
 
 const Navbar = () => {
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
+
+  const handleLogout = () => {
+    logout();
+    navigate("/login", { replace: true });
+  };
+
   return (
     <Sidebar>
       <LogoArea>
@@ -34,6 +44,16 @@ const Navbar = () => {
       </Nav>
 
       <SidebarFooter>
+        {user && (
+          <UserRow>
+            <span className="material-icons" style={{ fontSize: 18 }}>account_circle</span>
+            <UserEmail title={user.email}>{user.name || user.email}</UserEmail>
+          </UserRow>
+        )}
+        <LogoutBtn onClick={handleLogout}>
+          <span className="material-icons" style={{ fontSize: 16 }}>logout</span>
+          로그아웃
+        </LogoutBtn>
         <FooterText>QA Platform v1.0</FooterText>
       </SidebarFooter>
     </Sidebar>
@@ -110,6 +130,43 @@ const StyledNavLink = styled(NavLink)`
 const SidebarFooter = styled.div`
   padding: 16px 20px;
   border-top: 1px solid ${colors.darkGray};
+`;
+
+const UserRow = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: ${colors.lightGray};
+  margin-bottom: 10px;
+`;
+
+const UserEmail = styled.span`
+  font-size: 0.8rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+`;
+
+const LogoutBtn = styled.button`
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 8px 10px;
+  margin-bottom: 10px;
+  background: none;
+  border: 1px solid ${colors.darkGray};
+  border-radius: 6px;
+  color: ${colors.lightGray};
+  font-size: 0.8rem;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.15s;
+
+  &:hover {
+    background: ${colors.darkGray};
+    color: #fff;
+  }
 `;
 
 const FooterText = styled.span`

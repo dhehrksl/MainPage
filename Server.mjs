@@ -3,9 +3,16 @@ import cors from "cors";
 import dotenv from "dotenv";
 import mongoose from "mongoose";
 import puppeteer from "puppeteer";
+import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
 dotenv.config({ path: "./.env" });
+
+const JWT_SECRET = process.env.JWT_SECRET || "dev-only-insecure-secret-change-me";
+if (!process.env.JWT_SECRET) {
+  console.warn("⚠️  JWT_SECRET이 .env에 없어 개발용 기본값을 사용합니다. 배포 시 반드시 .env에 JWT_SECRET을 설정하세요.");
+}
 
 const app = express();
 app.use(cors());
@@ -45,6 +52,28 @@ const requireDb = (req, res, next) => {
     return res.status(503).json({ error: "DB가 연결되지 않았습니다. MongoDB를 실행 후 서버를 재시작하세요." });
   }
   next();
+};
+
+// ─────────────────────────────────────
+// 로그인 인증 헬퍼
+// ─────────────────────────────────────
+const signToken = (user) =>
+  jwt.sign({ sub: user._id.toString(), email: user.email }, JWT_SECRET, { expiresIn: "7d" });
+
+// Authorization: Bearer <token> 헤더를 검사해 req.user를 채우는 미들웨어.
+// 아래 app.use(requireAuth)로 등록된 지점 이후의 모든 라우트에 적용된다.
+const requireAuth = (req, res, next) => {
+  const header = req.headers.authorization || "";
+  const token = header.startsWith("Bearer ") ? header.slice(7) : null;
+  if (!token) {
+    return res.status(401).json({ error: "로그인이 필요합니다." });
+  }
+  try {
+    req.user = jwt.verify(token, JWT_SECRET);
+    next();
+  } catch {
+    return res.status(401).json({ error: "세션이 만료됐습니다. 다시 로그인해주세요." });
+  }
 };
 
 // ─────────────────────────────────────
@@ -96,8 +125,18 @@ const UtteranceSchema = new mongoose.Schema(
   {
     base: { type: String, required: true },
     similars: [String],
+    scores: [Number], // similars와 같은 순서의 AI 자체 평가 점수 (0~100)
     numSimilars: Number,
     source: { type: String, default: "manual" }, // manual | excel
+  },
+  { timestamps: true }
+);
+
+const UserSchema = new mongoose.Schema(
+  {
+    email: { type: String, required: true, unique: true, lowercase: true, trim: true, index: true },
+    passwordHash: { type: String, required: true },
+    name: { type: String, default: "" },
   },
   { timestamps: true }
 );
@@ -106,6 +145,7 @@ const Testcase = mongoose.model("Testcase", TestcaseSchema);
 const Bug = mongoose.model("Bug", BugSchema);
 const Post = mongoose.model("Post", PostSchema);
 const Utterance = mongoose.model("Utterance", UtteranceSchema);
+const User = mongoose.model("User", UserSchema);
 
 // ID 자동 생성 헬퍼
 const nextTcId = async () => {
@@ -124,7 +164,82 @@ const nextPostId = async () => {
 };
 
 // ─────────────────────────────────────
-// 4) Gemini 유사 발화 생성
+// 4) 인증 API (로그인 없이 접근 가능한 유일한 구간)
+// ─────────────────────────────────────
+app.get("/api/health", (req, res) => {
+  res.json({
+    server: "ok",
+    db: dbReady ? "connected" : "disconnected",
+    mongoUri: MONGODB_URI,
+  });
+});
+
+app.post("/api/auth/register", async (req, res) => {
+  const { email, password, name } = req.body;
+  if (!email?.trim() || !password) {
+    return res.status(400).json({ error: "이메일과 비밀번호를 입력하세요." });
+  }
+  if (password.length < 6) {
+    return res.status(400).json({ error: "비밀번호는 6자 이상이어야 합니다." });
+  }
+  if (!dbReady) {
+    return res.status(503).json({ error: "DB가 연결되지 않았습니다. 잠시 후 다시 시도해주세요." });
+  }
+
+  try {
+    const normalizedEmail = email.trim().toLowerCase();
+    const exists = await User.findOne({ email: normalizedEmail }).lean();
+    if (exists) {
+      return res.status(409).json({ error: "이미 가입된 이메일입니다." });
+    }
+    const passwordHash = await bcrypt.hash(password, 10);
+    const user = await User.create({ email: normalizedEmail, passwordHash, name: name || "" });
+    const token = signToken(user);
+    res.status(201).json({ token, user: { id: user._id, email: user.email, name: user.name } });
+  } catch (err) {
+    console.error("❌ 회원가입 오류:", err);
+    res.status(500).json({ error: "회원가입 중 오류가 발생했습니다." });
+  }
+});
+
+app.post("/api/auth/login", async (req, res) => {
+  const { email, password } = req.body;
+  if (!email?.trim() || !password) {
+    return res.status(400).json({ error: "이메일과 비밀번호를 입력하세요." });
+  }
+  if (!dbReady) {
+    return res.status(503).json({ error: "DB가 연결되지 않았습니다. 잠시 후 다시 시도해주세요." });
+  }
+
+  try {
+    const normalizedEmail = email.trim().toLowerCase();
+    const user = await User.findOne({ email: normalizedEmail });
+    if (!user) {
+      return res.status(401).json({ error: "이메일 또는 비밀번호가 올바르지 않습니다." });
+    }
+    const ok = await bcrypt.compare(password, user.passwordHash);
+    if (!ok) {
+      return res.status(401).json({ error: "이메일 또는 비밀번호가 올바르지 않습니다." });
+    }
+    const token = signToken(user);
+    res.json({ token, user: { id: user._id, email: user.email, name: user.name } });
+  } catch (err) {
+    console.error("❌ 로그인 오류:", err);
+    res.status(500).json({ error: "로그인 중 오류가 발생했습니다." });
+  }
+});
+
+app.get("/api/auth/me", requireAuth, async (req, res) => {
+  res.json({ id: req.user.sub, email: req.user.email });
+});
+
+// ─────────────────────────────────────
+// 이 지점 아래의 모든 라우트는 로그인(JWT)이 필요하다.
+// ─────────────────────────────────────
+app.use(requireAuth);
+
+// ─────────────────────────────────────
+// 5) Gemini 유사 발화 생성
 // ─────────────────────────────────────
 app.post("/generate", async (req, res) => {
   const { text, numSimilars = 5, persist = false } = req.body;
@@ -143,10 +258,21 @@ app.post("/generate", async (req, res) => {
 
   try {
     const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash-lite" });
-    const prompt = `다음 대표 발화를 참고해서 ${numSimilars}개의 자연스러운 유사 발화를 만들어줘.
-각 발화는 한 줄에 하나씩 출력하고, 번호나 특수문자는 붙이지 마.
+    const prompt = `너는 챗봇 NLU 데이터를 검수하는 QA 엔지니어야. 다음 대표 발화를 참고해서 ${numSimilars}개의 자연스러운 유사 발화를 만들고, 각 발화에 대해 QA 관점의 점수(score, 0~100 정수)를 스스로 매겨줘.
 
-대표 발화: "${text}"`;
+점수 기준:
+- 대표 발화와 "의도(intent)"가 동일한가 (다른 의미로 새면 크게 감점)
+- 문장이 자연스럽고 실제 사용자가 말할 법한가
+- 대표 발화와 표현이 지나치게 동일하거나(=사실상 복사) 아무 차이가 없으면 감점 (변별력 있는 패러프레이즈일수록 고득점)
+
+대표 발화: "${text}"
+
+다음 JSON 형식으로만 응답해줘. 다른 설명이나 마크다운 코드블록 없이 순수 JSON만:
+{
+  "similars": [
+    { "text": "유사 발화 문장", "score": 92 }
+  ]
+}`;
 
     const result = await model.generateContent(prompt);
     const response = await result.response;
@@ -154,21 +280,47 @@ app.post("/generate", async (req, res) => {
 
     console.log("AI 응답 원본:", rawText);
 
-    const similars = rawText
-      .split(/\r?\n/)
-      .map((line) => line.replace(/^\d+\.\s*/, "").trim())
-      .map((line) => line.trim())
-      .filter(Boolean)
+    const usage = response.usageMetadata;
+    if (usage) {
+      console.log(`📊 토큰 사용량 [발화 생성] 입력=${usage.promptTokenCount} / 출력=${usage.candidatesTokenCount} / 합계=${usage.totalTokenCount}`);
+    }
+
+    // JSON 파싱 (실패 시 줄바꿈 파싱으로 폴백 — 점수는 null 처리)
+    let items = [];
+    try {
+      const cleaned = rawText.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
+      const match = cleaned.match(/\{[\s\S]*\}/);
+      const parsed = JSON.parse(match ? match[0] : cleaned);
+      items = Array.isArray(parsed.similars) ? parsed.similars : [];
+    } catch {
+      items = rawText
+        .split(/\r?\n/)
+        .map((line) => line.replace(/^\d+\.\s*/, "").trim())
+        .filter(Boolean)
+        .map((line) => ({ text: line, score: null }));
+    }
+
+    let similars = items
+      .filter((it) => it && String(it.text || "").trim())
+      .map((it) => ({
+        text: String(it.text).trim(),
+        score: Number.isFinite(it.score) ? Math.max(0, Math.min(100, Math.round(it.score))) : null,
+      }))
       .slice(0, numSimilars);
 
     while (similars.length < numSimilars) {
-      similars.push("(생성 실패)");
+      similars.push({ text: "(생성 실패)", score: 0 });
     }
 
     // DB 저장 옵션
     if (persist && dbReady) {
       try {
-        await Utterance.create({ base: text, similars, numSimilars });
+        await Utterance.create({
+          base: text,
+          similars: similars.map((s) => s.text),
+          scores: similars.map((s) => s.score),
+          numSimilars,
+        });
       } catch (e) {
         console.warn("Utterance 저장 실패:", e.message);
       }
@@ -179,8 +331,111 @@ app.post("/generate", async (req, res) => {
     console.error("❌ AI 생성 오류:", err);
     res.status(500).json({
       base: text,
-      similars: Array(numSimilars).fill("(생성 실패)"),
+      similars: Array(numSimilars).fill({ text: "(생성 실패)", score: 0 }),
       error: err.message,
+    });
+  }
+});
+
+// 여러 대표 발화를 한 번의 Gemini 호출로 처리 — 무료 등급의 분당/일당 "요청 횟수" 한도를
+// 아끼기 위한 용도 (엑셀 행 수만큼 호출하던 것을 배치 단위 호출로 줄임)
+app.post("/generate-batch", async (req, res) => {
+  const { texts = [], numSimilars = 5, persist = false } = req.body;
+  const baseTexts = texts.map((t) => String(t || "").trim()).filter(Boolean);
+
+  if (baseTexts.length === 0) {
+    return res.status(400).json({ error: "대표 발화 목록이 비어있습니다.", results: [] });
+  }
+
+  console.log(`\n========== 배치 발화 생성 요청 (${baseTexts.length}건) ==========`);
+
+  try {
+    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash-lite" });
+    const listBlock = baseTexts.map((t, i) => `${i + 1}. "${t}"`).join("\n");
+
+    const prompt = `너는 챗봇 NLU 데이터를 검수하는 QA 엔지니어야. 아래는 대표 발화 목록이야. 각 대표 발화마다 자연스러운 유사 발화를 ${numSimilars}개씩 만들고, 각 유사 발화에 QA 관점의 점수(score, 0~100 정수)를 스스로 매겨줘.
+
+점수 기준:
+- 대표 발화와 "의도(intent)"가 동일한가 (다른 의미로 새면 크게 감점)
+- 문장이 자연스럽고 실제 사용자가 말할 법한가
+- 대표 발화와 표현이 지나치게 동일하거나(=사실상 복사) 아무 차이가 없으면 감점 (변별력 있는 패러프레이즈일수록 고득점)
+
+대표 발화 목록 (총 ${baseTexts.length}개, 반드시 이 순서를 그대로 유지해서 응답할 것):
+${listBlock}
+
+다음 JSON 형식으로만 응답해줘. results 배열의 길이와 순서는 위 목록과 정확히 일치해야 해. 다른 설명이나 마크다운 코드블록 없이 순수 JSON만:
+{
+  "results": [
+    {
+      "base": "1번 대표 발화 원문",
+      "similars": [
+        { "text": "유사 발화 문장", "score": 92 }
+      ]
+    }
+  ]
+}`;
+
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const rawText = response.text();
+
+    let parsedResults = [];
+    try {
+      const cleaned = rawText.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
+      const match = cleaned.match(/\{[\s\S]*\}/);
+      const parsed = JSON.parse(match ? match[0] : cleaned);
+      parsedResults = Array.isArray(parsed.results) ? parsed.results : [];
+    } catch (e) {
+      console.error("❌ 배치 응답 JSON 파싱 실패:", e.message);
+    }
+
+    // 입력 순서 기준으로 정규화 — AI가 개수를 못 맞추거나 파싱이 실패해도 항상 baseTexts와 같은 길이로 응답
+    const results = baseTexts.map((baseText, i) => {
+      const item = parsedResults[i];
+      let similars = Array.isArray(item?.similars) ? item.similars : [];
+      similars = similars
+        .filter((s) => s && String(s.text || "").trim())
+        .map((s) => ({
+          text: String(s.text).trim(),
+          score: Number.isFinite(s.score) ? Math.max(0, Math.min(100, Math.round(s.score))) : null,
+        }))
+        .slice(0, numSimilars);
+      while (similars.length < numSimilars) similars.push({ text: "(생성 실패)", score: 0 });
+      return { base: baseText, similars };
+    });
+
+    if (persist && dbReady) {
+      try {
+        await Utterance.insertMany(
+          results.map((r) => ({
+            base: r.base,
+            similars: r.similars.map((s) => s.text),
+            scores: r.similars.map((s) => s.score),
+            numSimilars,
+            source: "excel",
+          }))
+        );
+      } catch (e) {
+        console.warn("Utterance 일괄 저장 실패:", e.message);
+      }
+    }
+
+    res.json({ results });
+  } catch (err) {
+    console.error("❌ 배치 발화 생성 오류:", err);
+    let userMessage = err.message || "발화 생성 중 오류가 발생했습니다.";
+    let statusCode = 500;
+    if (err.status === 429) {
+      const retry = err.errorDetails?.find((d) => d?.["@type"]?.includes("RetryInfo"))?.retryDelay;
+      userMessage = `Gemini API 쿼터 초과 — ${retry || "약 30초~1분"} 후 다시 시도해주세요.`;
+      statusCode = 429;
+    }
+    res.status(statusCode).json({
+      error: userMessage,
+      results: baseTexts.map((baseText) => ({
+        base: baseText,
+        similars: Array(numSimilars).fill({ text: "(생성 실패)", score: 0 }),
+      })),
     });
   }
 });
@@ -193,7 +448,7 @@ app.post("/generate-test", (req, res) => {
 });
 
 // ─────────────────────────────────────
-// 4-1) URL → TC 자동 생성 (Puppeteer + Gemini Vision)
+// 5-1) URL → TC 자동 생성 (Puppeteer + Gemini Vision)
 // ─────────────────────────────────────
 app.post("/api/tc-from-url", async (req, res) => {
   const { url, numTCs = 10, useScreenshot = false } = req.body;
@@ -212,7 +467,14 @@ app.post("/api/tc-from-url", async (req, res) => {
   try {
     browser = await puppeteer.launch({
       headless: true,
-      args: ["--no-sandbox", "--disable-setuid-sandbox"],
+      args: [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        // 메모리가 작은 서버(1GB 등)에서 /dev/shm 부족으로 크롬이 죽는 걸 방지
+        "--disable-dev-shm-usage",
+        "--disable-gpu",
+        "--single-process",
+      ],
     });
     const page = await browser.newPage();
     await page.setViewport({ width: 1280, height: 900 });
@@ -408,17 +670,6 @@ URL: ${url}
 
     res.status(statusCode).json({ error: userMessage });
   }
-});
-
-// ─────────────────────────────────────
-// 5) 상태 엔드포인트
-// ─────────────────────────────────────
-app.get("/api/health", (req, res) => {
-  res.json({
-    server: "ok",
-    db: dbReady ? "connected" : "disconnected",
-    mongoUri: MONGODB_URI,
-  });
 });
 
 // ─────────────────────────────────────

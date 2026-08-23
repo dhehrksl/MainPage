@@ -8,12 +8,28 @@ const readLS = (key, fallback = []) => {
 };
 const writeLS = (key, data) => localStorage.setItem(key, JSON.stringify(data));
 
-// fetch 래퍼 — 네트워크/503 에러면 throw
+// ───────── 인증 토큰 저장 ─────────
+const AUTH_KEY = "qa_auth"; // { token, user }
+
+export const getStoredAuth = () => {
+  try { return JSON.parse(localStorage.getItem(AUTH_KEY)); } catch { return null; }
+};
+const setStoredAuth = (data) => localStorage.setItem(AUTH_KEY, JSON.stringify(data));
+export const clearStoredAuth = () => localStorage.removeItem(AUTH_KEY);
+
+// fetch 래퍼 — 저장된 토큰을 자동으로 실어 보내고, 401이면 로그아웃 이벤트를 발생시킨다.
 const request = async (path, opts = {}) => {
-  const res = await fetch(`${API_BASE}${path}`, {
-    headers: { "Content-Type": "application/json" },
-    ...opts,
-  });
+  const auth = getStoredAuth();
+  const headers = { "Content-Type": "application/json", ...(opts.headers || {}) };
+  if (auth?.token) headers.Authorization = `Bearer ${auth.token}`;
+
+  const res = await fetch(`${API_BASE}${path}`, { ...opts, headers });
+
+  if (res.status === 401) {
+    clearStoredAuth();
+    window.dispatchEvent(new Event("auth:unauthorized"));
+  }
+
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     const err = new Error(body.error || `HTTP ${res.status}`);
@@ -21,6 +37,25 @@ const request = async (path, opts = {}) => {
     throw err;
   }
   return res.json();
+};
+
+// ───────── 인증 ─────────
+export const registerUser = async (email, password, name) => {
+  const data = await request("/api/auth/register", {
+    method: "POST",
+    body: JSON.stringify({ email, password, name }),
+  });
+  setStoredAuth(data);
+  return data;
+};
+
+export const loginUser = async (email, password) => {
+  const data = await request("/api/auth/login", {
+    method: "POST",
+    body: JSON.stringify({ email, password }),
+  });
+  setStoredAuth(data);
+  return data;
 };
 
 // ───────── 상태 ─────────

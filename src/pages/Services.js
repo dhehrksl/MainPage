@@ -7,6 +7,13 @@ import {
 } from "../styles/theme";
 import { API_BASE, fetchUtterances } from "../api/client";
 
+// 점수 등급: 85+ 우수(초록) / 60~84 양호(주황) / 60 미만 주의(빨강)
+const scoreTier = (score) => {
+  if (score >= 85) return "good";
+  if (score >= 60) return "mid";
+  return "low";
+};
+
 const Services = () => {
   const [uploadedData, setUploadedData] = useState([]);
   const [tcResults, setTcResults] = useState([]);
@@ -52,33 +59,53 @@ const Services = () => {
     setLoading(true);
     setError("");
     setTcResults([]);
-    setProgress({ current: 0, total: uploadedData.length });
 
     try {
-      const results = [];
+      const rows = uploadedData.map((row) => String(row["대표 발화"] || row["대표발화"] || row["utterance"] || "").trim());
+      const results = new Array(rows.length).fill(null);
 
-      for (const [index, row] of uploadedData.entries()) {
-        const baseText = row["대표 발화"] || row["대표발화"] || row["utterance"] || "";
-        setProgress({ current: index + 1, total: uploadedData.length });
+      // 빈 대표 발화는 API 호출 없이 로컬에서 바로 처리
+      const validIdxs = [];
+      rows.forEach((text, i) => {
+        if (text) validIdxs.push(i);
+        else results[i] = { base: "(대표 발화 없음)", similars: Array(numSimilars).fill({ text: "(입력 없음)", score: null }) };
+      });
 
-        if (!baseText.trim()) {
-          results.push({ base: "(대표 발화 없음)", similars: Array(numSimilars).fill("(입력 없음)") });
-          continue;
-        }
+      // 대표 발화 여러 개를 한 번의 API 호출에 묶어서 보낸다.
+      // 무료 등급은 "요청 횟수" 자체가 한도이므로, 배치 크기는 (발화 수 × numSimilars)가
+      // 너무 커지지 않도록 numSimilars에 반비례해서 정한다.
+      const batchSize = Math.max(3, Math.floor(60 / Math.max(numSimilars, 1)));
+      const batches = [];
+      for (let i = 0; i < validIdxs.length; i += batchSize) {
+        batches.push(validIdxs.slice(i, i + batchSize));
+      }
+
+      setProgress({ current: 0, total: batches.length });
+
+      for (const [batchIdx, idxGroup] of batches.entries()) {
+        setProgress({ current: batchIdx + 1, total: batches.length });
+        const texts = idxGroup.map((i) => rows[i]);
 
         try {
-          const response = await fetch(`${API_BASE}/generate`, {
+          const response = await fetch(`${API_BASE}/generate-batch`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ text: baseText, numSimilars, persist }),
+            body: JSON.stringify({ texts, numSimilars, persist }),
           });
 
           if (!response.ok) throw new Error(`서버 오류 (${response.status})`);
 
           const data = await response.json();
-          results.push(data);
+          idxGroup.forEach((originalIdx, j) => {
+            results[originalIdx] = data.results?.[j] || {
+              base: texts[j],
+              similars: Array(numSimilars).fill({ text: "(생성 실패)", score: 0 }),
+            };
+          });
         } catch {
-          results.push({ base: baseText, similars: Array(numSimilars).fill("(생성 실패)") });
+          idxGroup.forEach((originalIdx, j) => {
+            results[originalIdx] = { base: texts[j], similars: Array(numSimilars).fill({ text: "(생성 실패)", score: 0 }) };
+          });
         }
       }
 
@@ -96,7 +123,8 @@ const Services = () => {
     const exportData = tcResults.map((result) => {
       const row = { "대표 발화": result.base };
       result.similars.forEach((s, i) => {
-        row[`유사 발화 ${i + 1}`] = s;
+        row[`유사 발화 ${i + 1}`] = s.text ?? s;
+        row[`점수 ${i + 1}`] = s.score ?? "";
       });
       return row;
     });
@@ -167,7 +195,7 @@ const Services = () => {
               disabled={loading || uploadedData.length === 0}
             >
               <span className="material-icons" style={{ fontSize: 18 }}>auto_awesome</span>
-              {loading ? `생성 중 (${progress.current}/${progress.total})` : "유사 발화 생성"}
+              {loading ? `생성 중 (배치 ${progress.current}/${progress.total})` : "유사 발화 생성"}
             </Button>
             <Button
               $variant="success"
@@ -187,7 +215,7 @@ const Services = () => {
         <div style={{ textAlign: "center", marginTop: 32 }}>
           <Spinner />
           <p style={{ color: colors.textSecondary, fontSize: "0.9rem" }}>
-            AI가 유사 발화를 생성하고 있습니다... ({progress.current}/{progress.total})
+            AI가 유사 발화를 생성하고 있습니다... (배치 {progress.current}/{progress.total})
           </p>
         </div>
       )}
@@ -236,8 +264,16 @@ const Services = () => {
                       {new Date(h.createdAt).toLocaleString("ko-KR")}
                     </span>
                   </Flex>
-                  <ul style={{ margin: "6px 0 0 20px", padding: 0, fontSize: "0.85rem", color: colors.text }}>
-                    {(h.similars || []).map((s, idx) => <li key={idx}>{s}</li>)}
+                  <ul style={{ margin: "6px 0 0 20px", padding: 0, fontSize: "0.85rem", color: colors.text, listStyle: "none" }}>
+                    {(h.similars || []).map((s, idx) => {
+                      const score = h.scores?.[idx];
+                      return (
+                        <li key={idx} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                          <span>{s}</span>
+                          {Number.isFinite(score) && <ScoreBadge $tier={scoreTier(score)}>{score}점</ScoreBadge>}
+                        </li>
+                      );
+                    })}
                   </ul>
                 </HistoryItem>
               ))
@@ -250,22 +286,34 @@ const Services = () => {
       {tcResults.length > 0 && (
         <ResultsSection>
           <SectionLabel>생성 결과 ({tcResults.length}건)</SectionLabel>
-          {tcResults.map((tc, idx) => (
-            <ResultCard key={idx}>
-              <ResultHeader>
-                <Badge $color="info">#{idx + 1}</Badge>
-                <ResultBase>{tc.base}</ResultBase>
-              </ResultHeader>
-              <SimilarGrid>
-                {tc.similars.map((s, i) => (
-                  <SimilarItem key={i}>
-                    <SimilarNum>{i + 1}</SimilarNum>
-                    <span>{s}</span>
-                  </SimilarItem>
-                ))}
-              </SimilarGrid>
-            </ResultCard>
-          ))}
+          {tcResults.map((tc, idx) => {
+            const validScores = tc.similars.map((s) => s.score).filter((n) => Number.isFinite(n));
+            const avgScore = validScores.length
+              ? Math.round(validScores.reduce((a, b) => a + b, 0) / validScores.length)
+              : null;
+            return (
+              <ResultCard key={idx}>
+                <ResultHeader>
+                  <Badge $color="info">#{idx + 1}</Badge>
+                  <ResultBase>{tc.base}</ResultBase>
+                  {avgScore !== null && <ScoreBadge $tier={scoreTier(avgScore)}>평균 {avgScore}점</ScoreBadge>}
+                </ResultHeader>
+                <SimilarGrid>
+                  {tc.similars.map((s, i) => {
+                    const text = typeof s === "string" ? s : s.text;
+                    const score = typeof s === "string" ? null : s.score;
+                    return (
+                      <SimilarItem key={i}>
+                        <SimilarNum>{i + 1}</SimilarNum>
+                        <span>{text}</span>
+                        {score !== null && <ScoreBadge $tier={scoreTier(score)}>{score}점</ScoreBadge>}
+                      </SimilarItem>
+                    );
+                  })}
+                </SimilarGrid>
+              </ResultCard>
+            );
+          })}
         </ResultsSection>
       )}
     </PageWrapper>
@@ -419,6 +467,25 @@ const CloseBtn = styled.button`
   color: ${colors.textSecondary};
   padding: 4px;
   &:hover { color: ${colors.text}; }
+`;
+
+const scoreTierColors = {
+  good: { bg: colors.successLight, text: "#065F46" },
+  mid: { bg: "#FEF3C7", text: "#92400E" },
+  low: { bg: colors.dangerLight, text: colors.danger },
+};
+
+const ScoreBadge = styled.span`
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  margin-left: auto;
+  flex-shrink: 0;
+  background: ${(p) => scoreTierColors[p.$tier].bg};
+  color: ${(p) => scoreTierColors[p.$tier].text};
 `;
 
 const SimilarNum = styled.span`

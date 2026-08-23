@@ -1,13 +1,13 @@
 import React, { useState, useEffect } from "react";
+import { Link } from "react-router-dom";
 import * as XLSX from "xlsx";
 import styled from "styled-components";
 import {
   PageWrapper, PageHeader, PageTitle, PageSubtitle,
-  Card, Button, Input, Select, Table, Badge, Flex, EmptyState, Spinner, colors,
+  Card, Button, Input, Select, Table, Badge, Flex, EmptyState, colors,
 } from "../styles/theme";
 import {
   fetchTestcases, createTestcase, updateTestcase, deleteTestcase, bulkImportTestcases,
-  generateTCFromUrl,
 } from "../api/client";
 
 const STATUS_OPTIONS = ["Pending", "Pass", "Fail", "Blocked", "Skip"];
@@ -25,18 +25,11 @@ const Content = () => {
     status: "Pending", priority: "Medium", category: "",
   });
 
-  // URL → TC 자동 생성 모달 상태
-  const [showUrlModal, setShowUrlModal] = useState(false);
-  const [urlInput, setUrlInput] = useState("");
-  const [urlLoading, setUrlLoading] = useState(false);
-  const [urlError, setUrlError] = useState("");
-  const [urlResult, setUrlResult] = useState(null); // { url, pageTitle, testcases, meta }
-  const [selectedIdx, setSelectedIdx] = useState(new Set());
-  const [numTCs, setNumTCs] = useState(10);
-  const [useScreenshot, setUseScreenshot] = useState(false); // 스크린샷(vision) 분석 포함 여부
-
   // 테이블 행 다중 선택 상태 (tc.id 기준)
   const [selectedRows, setSelectedRows] = useState(new Set());
+  // 행 클릭 시 설명/기대결과를 펼쳐 보여주는 상세보기 상태 (tc.id 기준, 1개만 펼침)
+  const [expandedId, setExpandedId] = useState(null);
+  const toggleExpanded = (id) => setExpandedId((prev) => (prev === id ? null : id));
 
   const reload = async () => {
     const { data, source } = await fetchTestcases();
@@ -148,59 +141,6 @@ const Content = () => {
     e.target.value = "";
   };
 
-  const resetUrlModal = () => {
-    setShowUrlModal(false);
-    setUrlInput("");
-    setUrlError("");
-    setUrlResult(null);
-    setSelectedIdx(new Set());
-    setUrlLoading(false);
-  };
-
-  const handleGenerateFromUrl = async () => {
-    const url = urlInput.trim();
-    if (!url) {
-      setUrlError("URL을 입력하세요.");
-      return;
-    }
-    if (!/^https?:\/\//i.test(url)) {
-      setUrlError("http:// 또는 https:// 로 시작해야 합니다.");
-      return;
-    }
-
-    setUrlLoading(true);
-    setUrlError("");
-    setUrlResult(null);
-
-    try {
-      const data = await generateTCFromUrl(url, numTCs, useScreenshot);
-      setUrlResult(data);
-      // 기본값으로 전체 선택
-      setSelectedIdx(new Set(data.testcases.map((_, i) => i)));
-    } catch (err) {
-      setUrlError(err.message || "생성 실패");
-    } finally {
-      setUrlLoading(false);
-    }
-  };
-
-  const toggleSelected = (idx) => {
-    setSelectedIdx((prev) => {
-      const next = new Set(prev);
-      if (next.has(idx)) next.delete(idx);
-      else next.add(idx);
-      return next;
-    });
-  };
-
-  const handleSaveGeneratedTCs = async () => {
-    if (!urlResult || selectedIdx.size === 0) return;
-    const rows = urlResult.testcases.filter((_, i) => selectedIdx.has(i));
-    await bulkImportTestcases(rows);
-    await reload();
-    resetUrlModal();
-  };
-
   const handleExportExcel = () => {
     const exportData = testcases.map((tc) => ({
       "TC ID": tc.id,
@@ -274,7 +214,7 @@ const Content = () => {
             <span className="material-icons" style={{ fontSize: 18 }}>add</span>
             TC 추가
           </Button>
-          <Button $variant="primary" onClick={() => setShowUrlModal(true)} style={{ background: colors.info }}>
+          <Button as={Link} to="/generate-tc" $variant="primary" style={{ background: colors.info }}>
             <span className="material-icons" style={{ fontSize: 18 }}>auto_awesome</span>
             URL로 TC 생성
           </Button>
@@ -350,152 +290,6 @@ const Content = () => {
         </FormOverlay>
       )}
 
-      {/* URL → TC 생성 모달 */}
-      {showUrlModal && (
-        <FormOverlay onClick={() => !urlLoading && resetUrlModal()}>
-          <UrlModalCard onClick={(e) => e.stopPropagation()}>
-            <Flex $justify="space-between" style={{ marginBottom: 16 }}>
-              <h3 style={{ margin: 0 }}>
-                <span className="material-icons" style={{ verticalAlign: "-5px", marginRight: 6, color: colors.info }}>auto_awesome</span>
-                URL로 TC 자동 생성
-              </h3>
-              <ActionBtn onClick={() => !urlLoading && resetUrlModal()} title="닫기">
-                <span className="material-icons">close</span>
-              </ActionBtn>
-            </Flex>
-
-            <PageSubtitle style={{ marginBottom: 16 }}>
-              페이지 URL을 입력하면 AI가 스크린샷과 구조를 분석해 TC를 생성합니다.
-            </PageSubtitle>
-
-            <FormGroup>
-              <label>페이지 URL</label>
-              <Flex $gap="8px">
-                <Input
-                  value={urlInput}
-                  onChange={(e) => setUrlInput(e.target.value)}
-                  placeholder="https://example.com/login"
-                  $width="100%"
-                  disabled={urlLoading}
-                  onKeyDown={(e) => { if (e.key === "Enter" && !urlLoading) handleGenerateFromUrl(); }}
-                />
-                <Select
-                  value={numTCs}
-                  onChange={(e) => setNumTCs(Number(e.target.value))}
-                  disabled={urlLoading}
-                  style={{ minWidth: 90 }}
-                >
-                  {[5, 8, 10, 15, 20, 30, 50].map((n) => <option key={n} value={n}>{n}개</option>)}
-                </Select>
-                <Button
-                  $variant="primary"
-                  onClick={handleGenerateFromUrl}
-                  disabled={urlLoading || !urlInput.trim()}
-                >
-                  {urlLoading ? "분석 중..." : "생성"}
-                </Button>
-              </Flex>
-              <ScreenshotOption title="켜면 페이지 스크린샷까지 AI가 분석합니다(디자인·레이아웃 반영). 끄면 페이지 구조 텍스트만 분석해 토큰(비용)을 크게 절약합니다.">
-                <input
-                  type="checkbox"
-                  checked={useScreenshot}
-                  onChange={(e) => setUseScreenshot(e.target.checked)}
-                  disabled={urlLoading}
-                />
-                <span>
-                  스크린샷(이미지) 분석 포함
-                  <em>{useScreenshot ? " — 시각 분석 O, 토큰 더 사용" : " — 텍스트만 분석, 저렴(권장)"}</em>
-                </span>
-              </ScreenshotOption>
-            </FormGroup>
-
-            {urlError && (
-              <ErrorBanner>
-                <span className="material-icons" style={{ fontSize: 18 }}>error_outline</span>
-                {urlError}
-              </ErrorBanner>
-            )}
-
-            {urlLoading && (
-              <div style={{ textAlign: "center", padding: "32px 0" }}>
-                <Spinner />
-                <p style={{ color: colors.textSecondary, fontSize: "0.85rem", marginTop: 8 }}>
-                  {useScreenshot
-                    ? "페이지 로딩 → 스크린샷 → AI 분석 중 (약 10~30초)"
-                    : "페이지 로딩 → 구조 분석 → AI 분석 중 (약 10~20초)"}
-                </p>
-              </div>
-            )}
-
-            {urlResult && !urlLoading && (
-              <>
-                <ResultSummary>
-                  <div>
-                    <strong>{urlResult.pageTitle || "(제목 없음)"}</strong>
-                    <ResultUrl>{urlResult.url}</ResultUrl>
-                  </div>
-                  <Flex $gap="6px">
-                    <Badge $color="info">헤딩 {urlResult.meta.headingCount}</Badge>
-                    <Badge $color="info">버튼 {urlResult.meta.buttonCount}</Badge>
-                    <Badge $color="info">입력 {urlResult.meta.inputCount}</Badge>
-                  </Flex>
-                </ResultSummary>
-
-                <Flex $justify="space-between" style={{ marginBottom: 10 }}>
-                  <span style={{ fontSize: "0.85rem", color: colors.textSecondary }}>
-                    생성된 TC: {urlResult.testcases.length}개 (선택됨 {selectedIdx.size}개)
-                  </span>
-                  <Flex $gap="6px">
-                    <SmallBtn onClick={() => setSelectedIdx(new Set(urlResult.testcases.map((_, i) => i)))}>전체 선택</SmallBtn>
-                    <SmallBtn onClick={() => setSelectedIdx(new Set())}>전체 해제</SmallBtn>
-                  </Flex>
-                </Flex>
-
-                <GeneratedList>
-                  {urlResult.testcases.map((tc, i) => (
-                    <GeneratedItem key={i} $selected={selectedIdx.has(i)} onClick={() => toggleSelected(i)}>
-                      <input
-                        type="checkbox"
-                        checked={selectedIdx.has(i)}
-                        onChange={() => toggleSelected(i)}
-                        onClick={(e) => e.stopPropagation()}
-                      />
-                      <div style={{ flex: 1 }}>
-                        <Flex $gap="8px" style={{ marginBottom: 4 }} $wrap>
-                          <strong style={{ fontSize: "0.9rem" }}>{tc.title}</strong>
-                          <Badge $color={tc.priority === "High" ? "danger" : tc.priority === "Medium" ? "warning" : "info"}>
-                            {tc.priority}
-                          </Badge>
-                          <Badge $color="gray">{tc.category}</Badge>
-                        </Flex>
-                        {tc.description && (
-                          <TcDesc>설명: {tc.description}</TcDesc>
-                        )}
-                        {tc.expectedResult && (
-                          <TcDesc>기대결과: {tc.expectedResult}</TcDesc>
-                        )}
-                      </div>
-                    </GeneratedItem>
-                  ))}
-                </GeneratedList>
-
-                <Flex $justify="flex-end" $gap="10px" style={{ marginTop: 20 }}>
-                  <Button $variant="secondary" onClick={resetUrlModal}>취소</Button>
-                  <Button
-                    $variant="primary"
-                    onClick={handleSaveGeneratedTCs}
-                    disabled={selectedIdx.size === 0}
-                  >
-                    <span className="material-icons" style={{ fontSize: 18 }}>save</span>
-                    선택한 {selectedIdx.size}개 TC 저장
-                  </Button>
-                </Flex>
-              </>
-            )}
-          </UrlModalCard>
-        </FormOverlay>
-      )}
-
       {/* 테이블 */}
       <Card $padding="0">
         {filtered.length === 0 ? (
@@ -507,6 +301,7 @@ const Content = () => {
           <Table>
             <thead>
               <tr>
+                <th style={{ width: 32 }} />
                 <th style={{ textAlign: "center", width: 40 }}>
                   <input
                     type="checkbox"
@@ -524,40 +319,66 @@ const Content = () => {
               </tr>
             </thead>
             <tbody>
-              {filtered.map((tc) => (
-                <tr key={tc.id}>
-                  <td style={{ textAlign: "center" }}>
-                    <input
-                      type="checkbox"
-                      checked={selectedRows.has(tc.id)}
-                      onChange={() => toggleRow(tc.id)}
-                    />
-                  </td>
-                  <td style={{ fontFamily: "monospace", fontSize: "0.85rem" }}>{tc.id}</td>
-                  <td style={{ fontWeight: 500 }}>{tc.title}</td>
-                  <td>{tc.category || "-"}</td>
-                  <td>{priorityBadge(tc.priority || "Medium")}</td>
-                  <td>
-                    <Select
-                      value={tc.status}
-                      onChange={(e) => handleStatusChange(tc.id, e.target.value)}
-                      style={{ padding: "4px 8px", fontSize: "0.8rem", border: "none", background: "transparent", fontWeight: 600 }}
-                    >
-                      {STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
-                    </Select>
-                  </td>
-                  <td>
-                    <Flex $justify="center" $gap="6px">
-                      <ActionBtn onClick={() => handleEdit(tc)} title="수정">
-                        <span className="material-icons">edit</span>
-                      </ActionBtn>
-                      <ActionBtn onClick={() => handleDelete(tc.id)} title="삭제" $danger>
-                        <span className="material-icons">delete</span>
-                      </ActionBtn>
-                    </Flex>
-                  </td>
-                </tr>
-              ))}
+              {filtered.map((tc) => {
+                const isExpanded = expandedId === tc.id;
+                return (
+                  <React.Fragment key={tc.id}>
+                    <ExpandableRow $expanded={isExpanded} onClick={() => toggleExpanded(tc.id)}>
+                      <td style={{ textAlign: "center", color: colors.textSecondary }}>
+                        <span className="material-icons" style={{ fontSize: 18 }}>
+                          {isExpanded ? "expand_more" : "chevron_right"}
+                        </span>
+                      </td>
+                      <td style={{ textAlign: "center" }} onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          checked={selectedRows.has(tc.id)}
+                          onChange={() => toggleRow(tc.id)}
+                        />
+                      </td>
+                      <td style={{ fontFamily: "monospace", fontSize: "0.85rem" }}>{tc.id}</td>
+                      <td style={{ fontWeight: 500 }}>{tc.title}</td>
+                      <td>{tc.category || "-"}</td>
+                      <td>{priorityBadge(tc.priority || "Medium")}</td>
+                      <td onClick={(e) => e.stopPropagation()}>
+                        <Select
+                          value={tc.status}
+                          onChange={(e) => handleStatusChange(tc.id, e.target.value)}
+                          style={{ padding: "4px 8px", fontSize: "0.8rem", border: "none", background: "transparent", fontWeight: 600 }}
+                        >
+                          {STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
+                        </Select>
+                      </td>
+                      <td onClick={(e) => e.stopPropagation()}>
+                        <Flex $justify="center" $gap="6px">
+                          <ActionBtn onClick={() => handleEdit(tc)} title="수정">
+                            <span className="material-icons">edit</span>
+                          </ActionBtn>
+                          <ActionBtn onClick={() => handleDelete(tc.id)} title="삭제" $danger>
+                            <span className="material-icons">delete</span>
+                          </ActionBtn>
+                        </Flex>
+                      </td>
+                    </ExpandableRow>
+                    {isExpanded && (
+                      <tr>
+                        <td colSpan={8} style={{ padding: 0 }}>
+                          <DetailPanel>
+                            <DetailField>
+                              <DetailLabel>설명</DetailLabel>
+                              <DetailValue>{tc.description || "(설명 없음)"}</DetailValue>
+                            </DetailField>
+                            <DetailField>
+                              <DetailLabel>기대 결과</DetailLabel>
+                              <DetailValue>{tc.expectedResult || "(기대 결과 없음)"}</DetailValue>
+                            </DetailField>
+                          </DetailPanel>
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
+                );
+              })}
             </tbody>
           </Table>
         )}
@@ -567,6 +388,39 @@ const Content = () => {
 };
 
 // ── Styled ──
+
+const ExpandableRow = styled.tr`
+  cursor: pointer;
+  background: ${(p) => (p.$expanded ? colors.bgMain : "transparent")};
+  &:hover {
+    background: ${colors.bgMain};
+  }
+`;
+
+const DetailPanel = styled.div`
+  padding: 14px 20px 18px 52px;
+  background: ${colors.bgMain};
+  border-bottom: 1px solid ${colors.border};
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+`;
+
+const DetailField = styled.div``;
+
+const DetailLabel = styled.div`
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: ${colors.textSecondary};
+  margin-bottom: 4px;
+`;
+
+const DetailValue = styled.div`
+  font-size: 0.88rem;
+  color: ${colors.text};
+  white-space: pre-wrap;
+  line-height: 1.5;
+`;
 
 const SourceBadge = styled.span`
   display: inline-flex;
@@ -623,23 +477,6 @@ const FormGroup = styled.div`
   }
 `;
 
-const ScreenshotOption = styled.label`
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 10px;
-  font-size: 0.85rem;
-  font-weight: 500;
-  color: ${colors.text};
-  cursor: pointer;
-  input { cursor: pointer; }
-  em {
-    font-style: normal;
-    font-size: 0.78rem;
-    color: ${colors.textSecondary};
-  }
-`;
-
 const StyledTextArea = styled.textarea`
   width: 100%;
   padding: 10px 14px;
@@ -653,95 +490,6 @@ const StyledTextArea = styled.textarea`
     border-color: ${colors.primary};
     box-shadow: 0 0 0 3px ${colors.primaryLight};
   }
-`;
-
-const UrlModalCard = styled(Card)`
-  width: 820px;
-  max-width: 95vw;
-  max-height: 90vh;
-  overflow-y: auto;
-`;
-
-const ErrorBanner = styled.div`
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 14px;
-  background: ${colors.dangerLight};
-  color: ${colors.danger};
-  border-radius: 8px;
-  font-size: 0.85rem;
-  font-weight: 500;
-  margin-bottom: 12px;
-`;
-
-const ResultSummary = styled.div`
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
-  padding: 12px 16px;
-  background: ${colors.bgMain};
-  border: 1px solid ${colors.border};
-  border-radius: 8px;
-  margin-bottom: 16px;
-  flex-wrap: wrap;
-`;
-
-const ResultUrl = styled.div`
-  font-size: 0.75rem;
-  color: ${colors.textSecondary};
-  margin-top: 2px;
-  font-family: monospace;
-  word-break: break-all;
-`;
-
-const GeneratedList = styled.div`
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  max-height: 400px;
-  overflow-y: auto;
-  padding: 2px;
-`;
-
-const GeneratedItem = styled.div`
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 12px 14px;
-  border: 1px solid ${(p) => (p.$selected ? colors.primary : colors.border)};
-  background: ${(p) => (p.$selected ? colors.primaryLight + "33" : colors.bgCard)};
-  border-radius: 8px;
-  cursor: pointer;
-  transition: all 0.15s;
-
-  &:hover { border-color: ${colors.primary}; }
-
-  input[type="checkbox"] {
-    margin-top: 4px;
-    cursor: pointer;
-  }
-`;
-
-const TcDesc = styled.p`
-  margin: 2px 0 0;
-  font-size: 0.8rem;
-  color: ${colors.textSecondary};
-  line-height: 1.4;
-  white-space: pre-line;
-`;
-
-const SmallBtn = styled.button`
-  padding: 4px 10px;
-  font-size: 0.75rem;
-  border: 1px solid ${colors.border};
-  background: ${colors.bgCard};
-  border-radius: 6px;
-  cursor: pointer;
-  color: ${colors.textSecondary};
-
-  &:hover { border-color: ${colors.primary}; color: ${colors.primary}; }
 `;
 
 const ActionBtn = styled.button`
