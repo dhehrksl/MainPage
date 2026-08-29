@@ -667,7 +667,7 @@ URL: ${url}
     } else if (err.status === 400 && /api.?key/i.test(err.message || "")) {
       userMessage = "Gemini API 키가 유효하지 않습니다. .env의 GOOGLE_API_KEY를 확인하세요.";
     } else if (/timeout|Navigation timeout/i.test(err.message || "")) {
-      userMessage = "페이지 로딩 시간 초과 — 다른 URL로 시도하거나 네트워크를 확인해주세요.";
+      userMessage = "페이지 로딩 시간 초과 — 대부분 대상 사이트의 봇 차단(사람 확인) 시스템이 자동화 브라우저 접속을 막아서 발생합니다. 이런 사이트는 이 기능으로 분석할 수 없습니다. 다른 URL로 시도해주세요.";
     } else if (/net::|ERR_NAME_NOT_RESOLVED|ERR_CONNECTION/i.test(err.message || "")) {
       userMessage = "해당 URL에 접속할 수 없습니다. URL을 다시 확인해주세요.";
     }
