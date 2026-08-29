@@ -482,7 +482,11 @@ app.post("/api/tc-from-url", async (req, res) => {
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     );
 
-    await page.goto(url, { waitUntil: "networkidle2", timeout: 30000 });
+    // networkidle2는 광고/채팅위젯/분석 스크립트가 계속 통신하는 사이트에서
+    // 네트워크가 절대 안 잠잠해져 타임아웃만 나기 쉽다. DOM만 준비되면 되므로
+    // domcontentloaded로 받고, 지연 렌더링되는 요소를 위해 잠깐만 더 기다린다.
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
+    await new Promise((resolve) => setTimeout(resolve, 2000));
 
     // 페이지 구조 추출
     const pageInfo = await page.evaluate(() => {
