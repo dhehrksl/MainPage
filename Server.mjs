@@ -30,6 +30,46 @@ try {
   console.error("❌ GoogleGenerativeAI 초기화 실패:", err.message);
 }
 
+// 이 API 키로 실제 호출 가능한 무료 등급 텍스트 생성 모델들(2026-08-23 기준,
+// /v1beta/models 응답으로 직접 확인). 우선순위대로 시도하다가 쿼터 초과/오류가
+// 나면 자동으로 다음 모델로 넘어간다. 이미지 생성·TTS·Deep Research 등
+// 용도가 다른 특수 모델은 제외했고, Gemma는 Gemini와 별도 쿼터라 마지막
+// 보루로 포함했다.
+const FREE_MODEL_FALLBACKS = [
+  "gemini-2.5-flash-lite",
+  "gemini-flash-lite-latest",
+  "gemini-2.5-flash",
+  "gemini-flash-latest",
+  "gemini-3.1-flash-lite",
+  "gemini-3.1-flash-lite-preview",
+  "gemini-3-flash-preview",
+  "gemini-3.5-flash-lite",
+  "gemini-3.5-flash",
+  "gemini-3.6-flash",
+  "gemini-3.7-flash",
+  "gemma-4-26b-a4b-it",
+  "gemma-4-31b-it",
+];
+
+// prompt(문자열 또는 parts 배열)를 위 목록 순서대로 시도한다.
+// 하나가 실패(쿼터 초과, 일시적 오류 등)하면 바로 다음 모델로 넘어가고,
+// 전부 실패해야만 마지막 에러를 던져서 각 라우트의 기존 에러 분류 로직이 처리하게 한다.
+const generateContentWithFallback = async (parts) => {
+  let lastErr;
+  for (const modelName of FREE_MODEL_FALLBACKS) {
+    try {
+      const model = genAI.getGenerativeModel({ model: modelName });
+      const result = await model.generateContent(parts);
+      const response = await result.response;
+      return { response, modelUsed: modelName };
+    } catch (err) {
+      console.warn(`⚠️  모델 [${modelName}] 실패 — 다음 모델로 전환: ${err.message}`);
+      lastErr = err;
+    }
+  }
+  throw lastErr;
+};
+
 // ─────────────────────────────────────
 // 2) MongoDB 연결 (실패해도 서버는 계속 동작)
 // ─────────────────────────────────────
@@ -257,7 +297,6 @@ app.post("/generate", async (req, res) => {
   }
 
   try {
-    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash-lite" });
     const prompt = `너는 챗봇 NLU 데이터를 검수하는 QA 엔지니어야. 다음 대표 발화를 참고해서 ${numSimilars}개의 자연스러운 유사 발화를 만들고, 각 발화에 대해 QA 관점의 점수(score, 0~100 정수)를 스스로 매겨줘.
 
 점수 기준:
@@ -274,11 +313,10 @@ app.post("/generate", async (req, res) => {
   ]
 }`;
 
-    const result = await model.generateContent(prompt);
-    const response = await result.response;
+    const { response, modelUsed } = await generateContentWithFallback(prompt);
     const rawText = response.text();
 
-    console.log("AI 응답 원본:", rawText);
+    console.log(`AI 응답 원본 (모델: ${modelUsed}):`, rawText);
 
     const usage = response.usageMetadata;
     if (usage) {
@@ -350,7 +388,6 @@ app.post("/generate-batch", async (req, res) => {
   console.log(`\n========== 배치 발화 생성 요청 (${baseTexts.length}건) ==========`);
 
   try {
-    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash-lite" });
     const listBlock = baseTexts.map((t, i) => `${i + 1}. "${t}"`).join("\n");
 
     const prompt = `너는 챗봇 NLU 데이터를 검수하는 QA 엔지니어야. 아래는 대표 발화 목록이야. 각 대표 발화마다 자연스러운 유사 발화를 ${numSimilars}개씩 만들고, 각 유사 발화에 QA 관점의 점수(score, 0~100 정수)를 스스로 매겨줘.
@@ -375,9 +412,9 @@ ${listBlock}
   ]
 }`;
 
-    const result = await model.generateContent(prompt);
-    const response = await result.response;
+    const { response, modelUsed } = await generateContentWithFallback(prompt);
     const rawText = response.text();
+    console.log(`배치 응답 모델: ${modelUsed}`);
 
     let parsedResults = [];
     try {
@@ -539,9 +576,7 @@ app.post("/api/tc-from-url", async (req, res) => {
 
     console.log(`페이지 수집 완료: title="${pageInfo.title}", buttons=${pageInfo.buttons.length}, inputs=${pageInfo.inputs.length}, screenshot=${useScreenshot ? "포함" : "생략"}`);
 
-    // Gemini 호출 (vision 지원 모델)
-    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash-lite" });
-
+    // Gemini 호출 (vision 지원 모델 우선 순회)
     const sourceDesc = useScreenshot
       ? "첨부된 웹 페이지 스크린샷과 아래 구조 정보를"
       : "아래 웹 페이지 구조 정보를";
@@ -593,10 +628,9 @@ URL: ${url}
     if (useScreenshot && screenshotBase64) {
       parts.push({ inlineData: { mimeType: "image/png", data: screenshotBase64 } });
     }
-    const result = await model.generateContent(parts);
-    const response = await result.response;
+    const { response, modelUsed } = await generateContentWithFallback(parts);
     const rawText = response.text();
-    console.log("Gemini 응답 길이:", rawText.length);
+    console.log(`Gemini 응답 길이: ${rawText.length} (모델: ${modelUsed})`);
 
     // 토큰 사용량 출력 (모드별 비용 비교용)
     const usage = response.usageMetadata;
