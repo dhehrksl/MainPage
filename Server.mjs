@@ -680,14 +680,16 @@ URL: ${url}
 
     // 프롬프트만으로는 flash-lite 같은 작은 모델이 아래 두 규칙을 안정적으로
     // 지키지 못해서, 코드에서 한 번 더 강제로 걸러낸다.
-    const HEDGE_IN_PARENS = /\([^)]*(또는|다를 수 있으나|예상|추정|경우에 따라)[^)]*\)/;
+    // 괄호 안팎 위치나 "또는/혹은" 같은 동의어로 우회하는 걸 막기 위해
+    // 기대결과 문자열 전체에서 헤징 단어를 찾는다.
+    const HEDGE_WORDS = /또는|혹은|다를 수 있으나|것으로 예상|예상되|추정되|경우에 따라/;
     const HAS_INTERACTION = /클릭|입력|제출|선택|체크박스|드래그|호버|스와이프/;
     const MAX_CONTENT_ONLY_TCS = 2;
 
     let contentOnlyCount = 0;
     const testcases = rawTestcases.filter((tc) => {
-      // 기대결과 괄호 안에 대안/헤징을 슬쩍 끼워 넣은 TC는 제외
-      if (HEDGE_IN_PARENS.test(tc.expectedResult)) return false;
+      // 기대결과에 대안/헤징 표현이 있으면(위치 무관) 제외
+      if (HEDGE_WORDS.test(tc.expectedResult)) return false;
 
       // 클릭/입력 등 실제 상호작용이 description에 하나도 없으면
       // "텍스트가 존재하는지 확인" 류로 보고, 최대 2개까지만 허용
