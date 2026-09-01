@@ -591,6 +591,8 @@ const TabBar = styled.div`
   gap: 4px;
   margin: 24px 0 0;
   border-bottom: 2px solid ${colors.border};
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 `;
 
 const TabBtn = styled.button`
@@ -605,6 +607,8 @@ const TabBtn = styled.button`
   cursor: pointer;
   font-family: inherit;
   transition: all 0.15s;
+  white-space: nowrap;
+  flex-shrink: 0;
 
   &:hover {
     color: ${colors.primary};
@@ -697,8 +701,10 @@ const MiniCard = styled.div`
 
 const FailRow = styled.div`
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   align-items: center;
+  gap: 8px;
   padding: 10px 0;
   border-bottom: 1px solid ${colors.border};
   &:last-child { border-bottom: none; }
@@ -746,6 +752,7 @@ const TrendDate = styled.span`
 // 카테고리 테이블
 const CategoryTable = styled.table`
   width: 100%;
+  min-width: 520px;
   border-collapse: collapse;
 
   th, td {
@@ -817,8 +824,9 @@ const LinkCard = styled.div`
 
 const LinkedBug = styled.div`
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
+  gap: 8px 10px;
   padding: 8px 12px;
   background: ${colors.bgCard};
   border-radius: 6px;

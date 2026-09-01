@@ -264,4 +264,12 @@ export const Grid = styled.div`
   display: grid;
   grid-template-columns: ${(p) => p.$cols || "repeat(auto-fit, minmax(240px, 1fr))"};
   gap: ${(p) => p.$gap || "20px"};
+
+  // 페이지마다 3~5단으로 고정해서 쓰는 $cols가 좁은 화면에서 그대로 찌그러지지 않도록 강제로 줄인다.
+  @media (max-width: 720px) {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  @media (max-width: 460px) {
+    grid-template-columns: 1fr;
+  }
 `;
