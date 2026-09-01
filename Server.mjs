@@ -30,23 +30,24 @@ try {
   console.error("❌ GoogleGenerativeAI 초기화 실패:", err.message);
 }
 
-// 이 API 키로 실제 호출 가능한 무료 등급 텍스트 생성 모델들(2026-08-23 기준,
-// /v1beta/models 응답으로 직접 확인). 우선순위대로 시도하다가 쿼터 초과/오류가
-// 나면 자동으로 다음 모델로 넘어간다. 이미지 생성·TTS·Deep Research 등
-// 용도가 다른 특수 모델은 제외했고, Gemma는 Gemini와 별도 쿼터라 마지막
-// 보루로 포함했다.
+// 이 API 키로 실제 호출 가능한 "무료 등급이 문서상 확인된" 텍스트/비전 생성 모델들.
+// 1) /v1beta/models 응답으로 이 키에서 실제 접근 가능한지 확인하고,
+// 2) ai.google.dev/gemini-api/docs/pricing 에서 free tier가 명시된 것만 남겼다.
+// "-latest" 별칭과 free tier 여부가 문서에 명시되지 않은 preview 하나는
+// 확실치 않아 제외했다 (2026-08-23 기준 확인).
+// 우선순위대로 시도하다가 쿼터 초과/오류가 나면 자동으로 다음 모델로 넘어간다.
+// Gemma는 Gemini와 별도 쿼터라 마지막 보루로 포함했다.
 const FREE_MODEL_FALLBACKS = [
   "gemini-2.5-flash-lite",
-  "gemini-flash-lite-latest",
-  "gemini-2.5-flash",
-  "gemini-flash-latest",
   "gemini-3.1-flash-lite",
-  "gemini-3.1-flash-lite-preview",
-  "gemini-3-flash-preview",
   "gemini-3.5-flash-lite",
+  "gemini-2.5-flash",
+  "gemini-3-flash-preview",
   "gemini-3.5-flash",
   "gemini-3.6-flash",
   "gemini-3.7-flash",
+  "gemini-2.5-pro",
+  "gemini-3.1-pro-preview",
   "gemma-4-26b-a4b-it",
   "gemma-4-31b-it",
 ];
