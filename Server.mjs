@@ -667,7 +667,7 @@ URL: ${url}
       else throw new Error("AI 응답을 JSON으로 파싱할 수 없습니다.");
     }
 
-    const testcases = (parsed.testcases || [])
+    const rawTestcases = (parsed.testcases || [])
       .filter((t) => t && t.title)
       .map((t) => ({
         title: String(t.title || "").trim(),
@@ -677,6 +677,28 @@ URL: ${url}
         category: String(t.category || "").trim() || "URL 자동 생성",
         status: "Pending",
       }));
+
+    // 프롬프트만으로는 flash-lite 같은 작은 모델이 아래 두 규칙을 안정적으로
+    // 지키지 못해서, 코드에서 한 번 더 강제로 걸러낸다.
+    const HEDGE_IN_PARENS = /\([^)]*(또는|다를 수 있으나|예상|추정|경우에 따라)[^)]*\)/;
+    const HAS_INTERACTION = /클릭|입력|제출|선택|체크박스|드래그|호버|스와이프/;
+    const MAX_CONTENT_ONLY_TCS = 2;
+
+    let contentOnlyCount = 0;
+    const testcases = rawTestcases.filter((tc) => {
+      // 기대결과 괄호 안에 대안/헤징을 슬쩍 끼워 넣은 TC는 제외
+      if (HEDGE_IN_PARENS.test(tc.expectedResult)) return false;
+
+      // 클릭/입력 등 실제 상호작용이 description에 하나도 없으면
+      // "텍스트가 존재하는지 확인" 류로 보고, 최대 2개까지만 허용
+      if (!HAS_INTERACTION.test(tc.description)) {
+        contentOnlyCount++;
+        return contentOnlyCount <= MAX_CONTENT_ONLY_TCS;
+      }
+      return true;
+    });
+
+    console.log(`TC 필터링: 생성 ${rawTestcases.length}개 → 최종 ${testcases.length}개 (헤징/과도한 존재확인 제외)`);
 
     res.json({
       url,
