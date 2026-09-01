@@ -40,6 +40,10 @@ export const PageWrapper = styled.div`
   padding: 32px;
   animation: ${fadeIn} 0.5s ease-out;
   min-height: 100%;
+
+  @media (max-width: 640px) {
+    padding: 16px;
+  }
 `;
 
 export const PageHeader = styled.div`
@@ -66,6 +70,8 @@ export const Card = styled.div`
   border: 1px solid ${colors.border};
   padding: ${(p) => p.$padding || "24px"};
   transition: box-shadow 0.2s;
+  // 테이블처럼 폭이 넓은 내용이 들어있을 때 레이아웃이 깨지지 않고 카드 안에서만 가로 스크롤되게 함
+  overflow-x: auto;
 
   ${(p) =>
     p.$hover &&
@@ -167,6 +173,7 @@ export const Select = styled.select`
 // ── 테이블 ──
 export const Table = styled.table`
   width: 100%;
+  min-width: 640px;
   border-collapse: collapse;
 
   th {

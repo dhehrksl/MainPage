@@ -74,6 +74,11 @@ const MainContent = styled.main`
   margin-left: 240px;
   min-height: 100vh;
   background: #F1F5F9;
+
+  @media (max-width: 860px) {
+    margin-left: 0;
+    padding-top: 64px; /* 모바일에서 고정된 햄버거 버튼과 안 겹치게 */
+  }
 `;
 
 export default App;
