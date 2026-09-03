@@ -774,7 +774,9 @@ URL: ${url}
 // 6) Testcases CRUD
 // ─────────────────────────────────────
 app.get("/api/testcases", requireDb, async (req, res) => {
-  const list = await Testcase.find().sort({ createdAt: 1 }).lean();
+  // 생성 시각이 아니라 TC 번호 순으로 정렬 — 수정/재생성으로 createdAt이 뒤섞여도
+  // 항상 TC-0001, 0002... 순서로 보이게 한다.
+  const list = await Testcase.find().sort({ tcId: 1 }).lean();
   res.json(list.map(({ _id, __v, tcId, ...rest }) => ({ id: tcId, ...rest })));
 });
 
