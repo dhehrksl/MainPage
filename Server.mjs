@@ -533,6 +533,13 @@ app.post("/api/tc-from-url", async (req, res) => {
     // 다른 요소(로그인, 신청 버튼, 푸터 링크 등)는 아예 AI한테 전달조차 안 된다.
     const pageInfo = await page.evaluate(() => {
       const txt = (el) => (el?.textContent || "").replace(/\s+/g, " ").trim();
+      // 텍스트/aria-label/value가 전부 없는 아이콘 전용 버튼(예: SVG만 있는 버튼)은
+      // 클래스명이라도 힌트로 넘긴다. 클래스명에 의미 있는 이름(예: "header__partner-button")이
+      // 붙어있는 경우가 많아서, 이거라도 없으면 AI가 그 요소의 존재 자체를 모르게 된다.
+      const classHint = (el) => {
+        const cls = typeof el.className === "string" ? el.className : "";
+        return cls.split(/\s+/).find((c) => c.length > 3) || "";
+      };
       const dedupe = (arr) => [...new Set(arr)];
       const dedupeBy = (arr, keyFn) => {
         const seen = new Set();
@@ -556,12 +563,12 @@ app.post("/api/tc-from-url", async (req, res) => {
         ).slice(0, 20),
         buttons: dedupe(
           Array.from(document.querySelectorAll("button, [role=button], input[type=button], input[type=submit]"))
-            .map((b) => txt(b) || b.getAttribute("aria-label") || b.value || "")
+            .map((b) => txt(b) || b.getAttribute("aria-label") || b.getAttribute("title") || b.value || classHint(b))
             .filter(Boolean)
         ).slice(0, 30),
         links: dedupe(
           Array.from(document.querySelectorAll("a"))
-            .map((a) => txt(a))
+            .map((a) => txt(a) || a.getAttribute("aria-label") || a.getAttribute("title") || classHint(a))
             .filter(Boolean)
         ).slice(0, 30),
         inputs: dedupeBy(
