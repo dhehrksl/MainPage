@@ -527,26 +527,45 @@ app.post("/api/tc-from-url", async (req, res) => {
     await new Promise((resolve) => setTimeout(resolve, 2000));
 
     // 페이지 구조 추출
+    // 모바일/데스크톱 메뉴가 둘 다 DOM에 있는 등 같은 요소가 중복 렌더링되는
+    // 사이트가 많아서, 캡(최대 개수)을 자르기 전에 먼저 중복을 제거한다.
+    // 안 그러면 캡의 절반이 똑같은 항목 반복에 낭비되고, 정작 캡 밖에 있는
+    // 다른 요소(로그인, 신청 버튼, 푸터 링크 등)는 아예 AI한테 전달조차 안 된다.
     const pageInfo = await page.evaluate(() => {
       const txt = (el) => (el?.textContent || "").replace(/\s+/g, " ").trim();
+      const dedupe = (arr) => [...new Set(arr)];
+      const dedupeBy = (arr, keyFn) => {
+        const seen = new Set();
+        return arr.filter((item) => {
+          const key = keyFn(item);
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+      };
+
       return {
         title: document.title,
         metaDescription: document.querySelector('meta[name="description"]')?.content || "",
         bodyTextSample: (document.body.innerText || "").replace(/\s+/g, " ").trim().slice(0, 800),
-        headings: Array.from(document.querySelectorAll("h1, h2, h3"))
-          .map((h) => ({ tag: h.tagName.toLowerCase(), text: txt(h) }))
-          .filter((h) => h.text)
-          .slice(0, 20),
-        buttons: Array.from(document.querySelectorAll("button, [role=button], input[type=button], input[type=submit]"))
-          .map((b) => txt(b) || b.getAttribute("aria-label") || b.value || "")
-          .filter(Boolean)
-          .slice(0, 30),
-        links: Array.from(document.querySelectorAll("a"))
-          .map((a) => txt(a))
-          .filter(Boolean)
-          .slice(0, 30),
-        inputs: Array.from(document.querySelectorAll("input, textarea, select"))
-          .map((i) => {
+        headings: dedupeBy(
+          Array.from(document.querySelectorAll("h1, h2, h3"))
+            .map((h) => ({ tag: h.tagName.toLowerCase(), text: txt(h) }))
+            .filter((h) => h.text),
+          (h) => h.tag + "|" + h.text
+        ).slice(0, 20),
+        buttons: dedupe(
+          Array.from(document.querySelectorAll("button, [role=button], input[type=button], input[type=submit]"))
+            .map((b) => txt(b) || b.getAttribute("aria-label") || b.value || "")
+            .filter(Boolean)
+        ).slice(0, 30),
+        links: dedupe(
+          Array.from(document.querySelectorAll("a"))
+            .map((a) => txt(a))
+            .filter(Boolean)
+        ).slice(0, 30),
+        inputs: dedupeBy(
+          Array.from(document.querySelectorAll("input, textarea, select")).map((i) => {
             const labelText = i.labels?.[0] ? txt(i.labels[0]) : "";
             return {
               type: (i.type || i.tagName).toLowerCase(),
@@ -555,8 +574,9 @@ app.post("/api/tc-from-url", async (req, res) => {
               label: labelText,
               required: !!i.required,
             };
-          })
-          .slice(0, 30),
+          }),
+          (i) => i.type + "|" + i.name + "|" + i.placeholder + "|" + i.label
+        ).slice(0, 30),
         formCount: document.querySelectorAll("form").length,
       };
     });
