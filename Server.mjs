@@ -129,6 +129,25 @@ const TestcaseSchema = new mongoose.Schema(
     status: { type: String, default: "Pending" }, // Pending/Pass/Fail/Blocked/Skip
     priority: { type: String, default: "Medium" },
     category: String,
+    // ── 자동 실행용 (URL→TC 생성 시에만 채워짐) ──
+    sourceUrl: String, // 이 TC를 생성한 원본 페이지 URL — 재실행 시 여기로 접속한다
+    actions: [mongoose.Schema.Types.Mixed], // 기계가 재현할 수 있는 조작 단계 (click/type/assertText/assertUrlChange)
+    // ── 마지막 자동 실행 결과 캐시 (목록에서 바로 보여주기용, 이력은 TestRun에 별도 저장) ──
+    lastRunStatus: String, // Pass | Fail | Error | null(아직 실행 안 함)
+    lastRunAt: Date,
+    lastRunMessage: String,
+  },
+  { timestamps: true }
+);
+
+const TestRunSchema = new mongoose.Schema(
+  {
+    tcId: { type: String, index: true },
+    tcTitle: String,
+    status: { type: String, required: true }, // Pass | Fail | Error
+    message: String, // 실패/에러 사유
+    screenshot: String, // 실패했을 때만 base64 PNG 저장 (용량 절약)
+    durationMs: Number,
   },
   { timestamps: true }
 );
@@ -187,6 +206,7 @@ const Bug = mongoose.model("Bug", BugSchema);
 const Post = mongoose.model("Post", PostSchema);
 const Utterance = mongoose.model("Utterance", UtteranceSchema);
 const User = mongoose.model("User", UserSchema);
+const TestRun = mongoose.model("TestRun", TestRunSchema);
 
 // ID 자동 생성 헬퍼
 const nextTcId = async () => {
@@ -202,6 +222,143 @@ const nextBugId = async () => {
 const nextPostId = async () => {
   const last = await Post.findOne().sort({ postId: -1 }).lean();
   return (last?.postId || 0) + 1;
+};
+
+// ─────────────────────────────────────
+// 3-2) TC 자동 실행 엔진 — 생성된 TC의 actions를 실제 브라우저에서 재현하고 Pass/Fail을 판정한다.
+// CSS 셀렉터가 아니라 "화면에 보이는 텍스트"로 요소를 찾는다 — 클래스명이 바뀌어도
+// 텍스트만 같으면 계속 동작하는 셀프힐링에 가까운 방식이고, URL→TC 생성 때 쓰는
+// 스크래핑 방식과 원리가 같아서 일관적이다.
+// ─────────────────────────────────────
+const PUPPETEER_SAFE_ARGS = [
+  "--no-sandbox",
+  "--disable-setuid-sandbox",
+  "--disable-dev-shm-usage",
+  "--disable-gpu",
+  "--single-process",
+];
+
+// 화면에 보이는 클릭 가능 요소 중 text를 포함하는 걸 찾아 elementHandle을 돌려준다.
+const findClickableByText = async (page, text) => {
+  const handle = await page.evaluateHandle((searchText) => {
+    const candidates = Array.from(
+      document.querySelectorAll("button, a, [role=button], input[type=button], input[type=submit]")
+    );
+    const norm = (s) => (s || "").replace(/\s+/g, " ").trim();
+    return candidates.find((el) => {
+      const label = norm(el.textContent) || norm(el.getAttribute("aria-label")) || norm(el.value);
+      return label.includes(searchText);
+    }) || null;
+  }, text);
+  const element = handle.asElement();
+  if (!element) {
+    await handle.dispose();
+    return null;
+  }
+  return element;
+};
+
+// 입력 필드를 placeholder/label/현재 포커스 여부로 찾아 elementHandle을 돌려준다.
+const findInputByHint = async (page, hint) => {
+  const handle = await page.evaluateHandle((searchHint) => {
+    const norm = (s) => (s || "").replace(/\s+/g, " ").trim();
+    const inputs = Array.from(document.querySelectorAll("input, textarea"));
+    if (!searchHint) return inputs[0] || null;
+    return (
+      inputs.find((el) => {
+        const label = el.labels?.[0] ? norm(el.labels[0].textContent) : "";
+        return norm(el.placeholder).includes(searchHint) || label.includes(searchHint);
+      }) || inputs[0] || null
+    );
+  }, hint);
+  const element = handle.asElement();
+  if (!element) {
+    await handle.dispose();
+    return null;
+  }
+  return element;
+};
+
+// action 하나를 수행한다. 실패하면 어떤 action인지 알 수 있게 에러 메시지에 남긴다.
+const performAction = async (page, action, index) => {
+  const label = `${index + 1}번째 단계(${action.type})`;
+  try {
+    if (action.type === "click") {
+      const el = await findClickableByText(page, action.text);
+      if (!el) throw new Error(`"${action.text}" 텍스트를 가진 클릭 요소를 찾지 못함`);
+      await el.click();
+      await el.dispose();
+    } else if (action.type === "type") {
+      const el = await findInputByHint(page, action.targetHint || "");
+      if (!el) throw new Error("입력할 필드를 찾지 못함");
+      await el.click();
+      await el.type(String(action.text || ""), { delay: 30 });
+      await el.dispose();
+    } else if (action.type === "assertText") {
+      const bodyText = await page.evaluate(() => document.body.innerText || "");
+      if (!bodyText.includes(action.text)) {
+        throw new Error(`"${action.text}" 텍스트가 화면에 없음`);
+      }
+    } else if (action.type === "assertUrlChange") {
+      if (page.url() === action.beforeUrl) {
+        throw new Error("URL이 이전과 동일함 (페이지 이동 안 됨)");
+      }
+    } else {
+      throw new Error(`알 수 없는 action.type: ${action.type}`);
+    }
+    await new Promise((r) => setTimeout(r, 700)); // 렌더링/네비게이션이 안정될 시간
+  } catch (err) {
+    throw new Error(`${label} 실패 — ${err.message}`);
+  }
+};
+
+// TC 하나를 실제로 실행해서 { status, message, screenshot, durationMs }를 돌려준다.
+// 절대 throw하지 않는다 — 실행 자체의 실패도 결과(Error 상태)로 정상 반환한다.
+const runTestcase = async (tc) => {
+  const startedAt = Date.now();
+  if (!tc.sourceUrl || !Array.isArray(tc.actions) || tc.actions.length === 0) {
+    return { status: "Error", message: "이 TC는 자동 실행 정보(sourceUrl/actions)가 없습니다. URL→TC 생성으로 만든 TC만 실행 가능합니다.", screenshot: null, durationMs: 0 };
+  }
+
+  let browser;
+  try {
+    browser = await puppeteer.launch({ headless: true, args: PUPPETEER_SAFE_ARGS });
+    const page = await browser.newPage();
+    await page.setViewport({ width: 1280, height: 900 });
+    await page.setUserAgent(
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    );
+    await page.goto(tc.sourceUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
+    await new Promise((r) => setTimeout(r, 2000));
+
+    for (let i = 0; i < tc.actions.length; i++) {
+      const action = { ...tc.actions[i] };
+      if (action.type === "assertUrlChange" && !action.beforeUrl) {
+        action.beforeUrl = page.url();
+      }
+      await performAction(page, action, i);
+    }
+
+    await browser.close();
+    browser = null;
+    return { status: "Pass", message: "", screenshot: null, durationMs: Date.now() - startedAt };
+  } catch (err) {
+    let screenshot = null;
+    try {
+      if (browser) {
+        const pages = await browser.pages();
+        const target = pages[pages.length - 1];
+        screenshot = await target.screenshot({ type: "png", encoding: "base64" });
+      }
+    } catch {
+      // 스크린샷 실패는 무시 — 실패 사유 메시지만으로도 충분히 유용하다
+    }
+    return { status: "Fail", message: err.message, screenshot, durationMs: Date.now() - startedAt };
+  } finally {
+    if (browser) {
+      try { await browser.close(); } catch {}
+    }
+  }
 };
 
 // ─────────────────────────────────────
@@ -637,13 +794,25 @@ URL: ${url}
 - 텍스트/제목/메타데이터가 "페이지에 표시되는지 확인한다" 유형의 단순 존재 확인 TC는 전체 응답에서 최대 2개까지만 포함할 것 (3개째부터는 만들지 말 것). 버튼·입력·폼·링크 클릭처럼 실제 상호작용을 검증하는 TC를 항상 우선할 것.
 - 위 기준들 때문에 만들 수 있는 TC가 ${numTCs}개보다 적어지는 건 정상이다. 페이지에 상호작용 요소가 별로 없다면 5개, 3개만 반환해도 되고, 그게 개수를 억지로 채운 것보다 훨씬 낫다. 개수보다 품질이 항상 우선이다.
 
+각 TC마다 description을 실제 브라우저에서 자동으로 재현할 수 있는 "actions" 배열도 함께 만들어줘. actions의 각 항목은 아래 4종류 중 하나여야 해:
+- {"type":"click","text":"버튼/링크에 실제로 표시된 텍스트 그대로"} — 그 텍스트를 포함하는 클릭 가능 요소를 클릭
+- {"type":"type","targetHint":"입력필드의 placeholder나 라벨 일부","text":"입력할 값"} — 해당 입력 필드에 값을 입력
+- {"type":"assertText","text":"이 문자열이 포함되어 있으면 성공"} — expectedResult에서 실제로 관찰 가능한 핵심 문구를 그대로 뽑아서 검증 조건으로 쓸 것
+- {"type":"assertUrlChange"} — expectedResult가 "다른 페이지로 이동한다"는 뜻이면 사용 (파라미터 없음)
+actions는 description의 단계 순서와 정확히 대응해야 하고, 마지막엔 반드시 expectedResult를 검증하는 assertText 또는 assertUrlChange가 있어야 한다. click/type에 쓰는 text는 위에 제공된 버튼/링크/입력필드 목록에 실제로 있는 텍스트만 쓸 것 — 지어내지 말 것.
+
 예시 (형식 참고용 — 실제 케이스는 반드시 위에서 제공된 이 페이지의 실제 데이터에 근거해서 작성):
 {
   "title": "이메일 형식이 아닌 값을 입력했을 때 에러 메시지 노출을 확인한다",
   "description": "1. 이메일 입력란에 'abc123'을 입력한다\\n2. '로그인' 버튼을 클릭한다",
   "expectedResult": "이메일 형식 오류 메시지가 입력란 하단에 표시되고 로그인이 진행되지 않는다",
   "priority": "High",
-  "category": "로그인"
+  "category": "로그인",
+  "actions": [
+    {"type":"type","targetHint":"이메일","text":"abc123"},
+    {"type":"click","text":"로그인"},
+    {"type":"assertText","text":"이메일 형식"}
+  ]
 }
 
 다음 JSON 형식으로만 응답해줘. 다른 설명이나 마크다운 코드블록 표시 없이 순수 JSON만:
@@ -655,7 +824,8 @@ URL: ${url}
       "description": "1. ... \\n2. ... \\n3. ...",
       "expectedResult": "기대 결과",
       "priority": "High",
-      "category": "카테고리명"
+      "category": "카테고리명",
+      "actions": [ { "type": "click", "text": "..." } ]
     }
   ]
 }`;
@@ -694,6 +864,21 @@ URL: ${url}
       else throw new Error("AI 응답을 JSON으로 파싱할 수 없습니다.");
     }
 
+    // actions 배열 검증 — 실행 엔진이 아는 타입만, 필요한 필드가 문자열로 있을 때만 통과시킨다.
+    const ACTION_TYPES = new Set(["click", "type", "assertText", "assertUrlChange"]);
+    const sanitizeActions = (actions) => {
+      if (!Array.isArray(actions)) return [];
+      return actions
+        .filter((a) => a && ACTION_TYPES.has(a.type))
+        .map((a) => {
+          if (a.type === "click") return { type: "click", text: String(a.text || "").trim() };
+          if (a.type === "type") return { type: "type", targetHint: String(a.targetHint || "").trim(), text: String(a.text || "").trim() };
+          if (a.type === "assertText") return { type: "assertText", text: String(a.text || "").trim() };
+          return { type: "assertUrlChange" };
+        })
+        .filter((a) => a.type === "assertUrlChange" || a.text); // text가 필요한 타입인데 비었으면 제외
+    };
+
     const rawTestcases = (parsed.testcases || [])
       .filter((t) => t && t.title)
       .map((t) => ({
@@ -703,6 +888,8 @@ URL: ${url}
         priority: ["High", "Medium", "Low"].includes(t.priority) ? t.priority : "Medium",
         category: String(t.category || "").trim() || "URL 자동 생성",
         status: "Pending",
+        sourceUrl: url,
+        actions: sanitizeActions(t.actions),
       }));
 
     // 프롬프트만으로는 flash-lite 같은 작은 모델이 아래 두 규칙을 안정적으로
@@ -823,6 +1010,90 @@ app.post("/api/testcases/bulk", requireDb, async (req, res) => {
     out.push({ id: tid, ...rest });
   }
   res.status(201).json(out);
+});
+
+// ─────────────────────────────────────
+// 6-1) TC 자동 실행
+// ─────────────────────────────────────
+
+// 하나의 TC를 실제로 실행하고, 결과를 TC 문서(캐시)와 TestRun(이력)에 같이 기록한다.
+app.post("/api/testcases/:id/run", requireDb, async (req, res) => {
+  const tc = await Testcase.findOne({ tcId: req.params.id }).lean();
+  if (!tc) return res.status(404).json({ error: "not found" });
+
+  console.log(`\n========== TC 실행: ${tc.tcId} ==========`);
+  const result = await runTestcase(tc);
+  console.log(`→ ${result.status} (${result.durationMs}ms)${result.message ? " — " + result.message : ""}`);
+
+  await Testcase.updateOne(
+    { tcId: req.params.id },
+    { $set: { lastRunStatus: result.status, lastRunAt: new Date(), lastRunMessage: result.message || "" } }
+  );
+  await TestRun.create({
+    tcId: req.params.id,
+    tcTitle: tc.title,
+    status: result.status,
+    message: result.message || "",
+    screenshot: result.screenshot || null,
+    durationMs: result.durationMs,
+  });
+
+  res.json({
+    id: req.params.id,
+    status: result.status,
+    message: result.message,
+    screenshot: result.screenshot,
+    durationMs: result.durationMs,
+  });
+});
+
+// 여러 TC를 순서대로(동시 실행 아님 — 서버 메모리가 작아서 한 번에 하나씩) 실행한다.
+// ids를 안 주면 actions가 있는 TC 전체를 실행한다.
+app.post("/api/testcases/run-batch", requireDb, async (req, res) => {
+  const { ids } = req.body || {};
+  const query = Array.isArray(ids) && ids.length > 0
+    ? { tcId: { $in: ids } }
+    : { actions: { $exists: true, $ne: [] } };
+  const list = await Testcase.find(query).lean();
+
+  console.log(`\n========== TC 일괄 실행 (${list.length}건) ==========`);
+  const results = [];
+  for (const tc of list) {
+    const result = await runTestcase(tc);
+    console.log(`→ ${tc.tcId} ${result.status}${result.message ? " — " + result.message : ""}`);
+
+    await Testcase.updateOne(
+      { tcId: tc.tcId },
+      { $set: { lastRunStatus: result.status, lastRunAt: new Date(), lastRunMessage: result.message || "" } }
+    );
+    await TestRun.create({
+      tcId: tc.tcId,
+      tcTitle: tc.title,
+      status: result.status,
+      message: result.message || "",
+      screenshot: result.screenshot || null,
+      durationMs: result.durationMs,
+    });
+
+    results.push({ id: tc.tcId, title: tc.title, status: result.status, message: result.message, durationMs: result.durationMs });
+  }
+
+  const summary = {
+    total: results.length,
+    pass: results.filter((r) => r.status === "Pass").length,
+    fail: results.filter((r) => r.status === "Fail").length,
+    error: results.filter((r) => r.status === "Error").length,
+  };
+  res.json({ summary, results });
+});
+
+// 실행 이력 조회 (최근 순). ?tcId=TC-0001 로 특정 TC만 필터 가능.
+app.get("/api/test-runs", requireDb, async (req, res) => {
+  const query = req.query.tcId ? { tcId: req.query.tcId } : {};
+  const list = await TestRun.find(query).sort({ createdAt: -1 }).limit(100).lean();
+  res.json(
+    list.map(({ _id, __v, ...rest }) => ({ id: _id, ...rest }))
+  );
 });
 
 // ─────────────────────────────────────

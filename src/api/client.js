@@ -135,6 +135,18 @@ export const bulkImportTestcases = async (rows) => {
   }
 };
 
+// ───────── TC 자동 실행 ─────────
+// 이 API들은 로컬 폴백이 없다 — 실제 브라우저 실행은 서버에서만 가능하기 때문.
+export const runTestcase = (id) => request(`/api/testcases/${id}/run`, { method: "POST" });
+
+export const runTestcasesBatch = (ids) =>
+  request("/api/testcases/run-batch", { method: "POST", body: JSON.stringify({ ids }) });
+
+export const fetchTestRuns = async (tcId) => {
+  const q = tcId ? `?tcId=${encodeURIComponent(tcId)}` : "";
+  return request(`/api/test-runs${q}`);
+};
+
 // ───────── Bugs ─────────
 const BUG_KEY = "qa_bugs";
 

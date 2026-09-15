@@ -8,6 +8,7 @@ import {
 } from "../styles/theme";
 import {
   fetchTestcases, createTestcase, updateTestcase, deleteTestcase, bulkImportTestcases,
+  runTestcase, runTestcasesBatch,
 } from "../api/client";
 
 const STATUS_OPTIONS = ["Pending", "Pass", "Fail", "Blocked", "Skip"];
@@ -30,6 +31,12 @@ const Content = () => {
   // 행 클릭 시 설명/기대결과를 펼쳐 보여주는 상세보기 상태 (tc.id 기준, 1개만 펼침)
   const [expandedId, setExpandedId] = useState(null);
   const toggleExpanded = (id) => setExpandedId((prev) => (prev === id ? null : id));
+
+  // TC 자동 실행 상태
+  const [runningIds, setRunningIds] = useState(new Set()); // 실행 중인 TC id들
+  const [runResults, setRunResults] = useState({}); // id -> { status, message, screenshot }
+  const [runningBatch, setRunningBatch] = useState(false);
+  const [batchSummary, setBatchSummary] = useState(null); // { total, pass, fail, error }
 
   const reload = async () => {
     const { data, source } = await fetchTestcases();
@@ -106,6 +113,45 @@ const Content = () => {
     await Promise.all([...selectedRows].map((id) => deleteTestcase(id)));
     setSelectedRows(new Set());
     await reload();
+  };
+
+  // TC 하나를 실제 브라우저로 실행 — 실행 결과를 상태(Pass/Fail)에도 반영한다.
+  const handleRun = async (id) => {
+    setRunningIds((prev) => new Set(prev).add(id));
+    try {
+      const result = await runTestcase(id);
+      setRunResults((prev) => ({ ...prev, [id]: result }));
+      if (result.status === "Pass" || result.status === "Fail") {
+        await updateTestcase(id, { status: result.status });
+      }
+      await reload();
+    } catch (err) {
+      setRunResults((prev) => ({ ...prev, [id]: { status: "Error", message: err.message || "실행 요청 실패" } }));
+    } finally {
+      setRunningIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+    }
+  };
+
+  // actions가 있는 TC 전체를 순서대로 실행 (서버가 한 번에 하나씩 처리)
+  const handleRunAll = async () => {
+    const runnableCount = testcases.filter((tc) => Array.isArray(tc.actions) && tc.actions.length > 0).length;
+    if (runnableCount === 0) {
+      alert("자동 실행 가능한 TC가 없습니다. URL로 TC 생성한 것만 실행할 수 있어요.");
+      return;
+    }
+    setRunningBatch(true);
+    setBatchSummary(null);
+    try {
+      const { summary } = await runTestcasesBatch();
+      setBatchSummary(summary);
+      await reload();
+    } finally {
+      setRunningBatch(false);
+    }
   };
 
   const handleStatusChange = async (id, status) => {
@@ -229,8 +275,25 @@ const Content = () => {
             <span className="material-icons" style={{ fontSize: 18 }}>download</span>
             엑셀 내보내기
           </Button>
+          <Button $variant="primary" onClick={handleRunAll} disabled={runningBatch} style={{ background: colors.dark }}>
+            <span className="material-icons" style={{ fontSize: 18 }}>{runningBatch ? "hourglass_top" : "smart_toy"}</span>
+            {runningBatch ? "전체 실행 중..." : "전체 자동 실행"}
+          </Button>
         </Flex>
       </Flex>
+
+      {batchSummary && (
+        <BatchSummaryBanner>
+          <span className="material-icons" style={{ fontSize: 18 }}>fact_check</span>
+          전체 실행 완료 — 총 {batchSummary.total}건 중{" "}
+          <b style={{ color: colors.success }}>Pass {batchSummary.pass}</b>,{" "}
+          <b style={{ color: colors.danger }}>Fail {batchSummary.fail}</b>
+          {batchSummary.error > 0 && <> , <b style={{ color: colors.textSecondary }}>Error {batchSummary.error}</b></>}
+          <CloseBannerBtn onClick={() => setBatchSummary(null)}>
+            <span className="material-icons" style={{ fontSize: 16 }}>close</span>
+          </CloseBannerBtn>
+        </BatchSummaryBanner>
+      )}
 
       {/* 요약 카드 */}
       <Flex $gap="12px" style={{ marginBottom: 20 }} $wrap>
@@ -315,6 +378,7 @@ const Content = () => {
                 <th>카테고리</th>
                 <th>우선순위</th>
                 <th>상태</th>
+                <th style={{ textAlign: "center" }}>자동 실행</th>
                 <th style={{ textAlign: "center" }}>액션</th>
               </tr>
             </thead>
@@ -349,6 +413,18 @@ const Content = () => {
                           {STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
                         </Select>
                       </td>
+                      <td style={{ textAlign: "center" }} onClick={(e) => e.stopPropagation()}>
+                        {Array.isArray(tc.actions) && tc.actions.length > 0 ? (
+                          <Flex $justify="center" $gap="6px">
+                            <ActionBtn onClick={() => handleRun(tc.id)} title="자동 실행" disabled={runningIds.has(tc.id)}>
+                              <span className="material-icons">{runningIds.has(tc.id) ? "hourglass_top" : "play_circle"}</span>
+                            </ActionBtn>
+                            {tc.lastRunStatus && <RunBadge $status={tc.lastRunStatus}>{tc.lastRunStatus}</RunBadge>}
+                          </Flex>
+                        ) : (
+                          <span style={{ fontSize: "0.75rem", color: colors.textSecondary }}>-</span>
+                        )}
+                      </td>
                       <td onClick={(e) => e.stopPropagation()}>
                         <Flex $justify="center" $gap="6px">
                           <ActionBtn onClick={() => handleEdit(tc)} title="수정">
@@ -362,7 +438,7 @@ const Content = () => {
                     </ExpandableRow>
                     {isExpanded && (
                       <tr>
-                        <td colSpan={8} style={{ padding: 0 }}>
+                        <td colSpan={9} style={{ padding: 0 }}>
                           <DetailPanel>
                             <DetailField>
                               <DetailLabel>설명</DetailLabel>
@@ -372,6 +448,22 @@ const Content = () => {
                               <DetailLabel>기대 결과</DetailLabel>
                               <DetailValue>{tc.expectedResult || "(기대 결과 없음)"}</DetailValue>
                             </DetailField>
+                            {tc.lastRunStatus && (
+                              <DetailField>
+                                <DetailLabel>마지막 자동 실행 결과</DetailLabel>
+                                <DetailValue>
+                                  <RunBadge $status={tc.lastRunStatus}>{tc.lastRunStatus}</RunBadge>
+                                  {tc.lastRunAt && <span style={{ marginLeft: 8, color: colors.textSecondary, fontSize: "0.8rem" }}>{new Date(tc.lastRunAt).toLocaleString("ko-KR")}</span>}
+                                  {tc.lastRunMessage && <div style={{ marginTop: 6 }}>{tc.lastRunMessage}</div>}
+                                </DetailValue>
+                              </DetailField>
+                            )}
+                            {runResults[tc.id]?.screenshot && (
+                              <DetailField>
+                                <DetailLabel>실패 스크린샷</DetailLabel>
+                                <ScreenshotImg src={`data:image/png;base64,${runResults[tc.id].screenshot}`} alt="실행 실패 스크린샷" />
+                              </DetailField>
+                            )}
                           </DetailPanel>
                         </td>
                       </tr>
@@ -388,6 +480,52 @@ const Content = () => {
 };
 
 // ── Styled ──
+
+const runBadgeColors = {
+  Pass: { bg: colors.successLight, text: "#065F46" },
+  Fail: { bg: colors.dangerLight, text: colors.danger },
+  Error: { bg: colors.border, text: colors.textSecondary },
+};
+
+const RunBadge = styled.span`
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  background: ${(p) => (runBadgeColors[p.$status] || runBadgeColors.Error).bg};
+  color: ${(p) => (runBadgeColors[p.$status] || runBadgeColors.Error).text};
+`;
+
+const ScreenshotImg = styled.img`
+  max-width: 100%;
+  margin-top: 6px;
+  border: 1px solid ${colors.border};
+  border-radius: 8px;
+`;
+
+const BatchSummaryBanner = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  background: ${colors.bgMain};
+  border: 1px solid ${colors.border};
+  border-radius: 8px;
+  font-size: 0.9rem;
+`;
+
+const CloseBannerBtn = styled.button`
+  margin-left: auto;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: ${colors.textSecondary};
+  display: flex;
+  &:hover { color: ${colors.text}; }
+`;
 
 const ExpandableRow = styled.tr`
   cursor: pointer;
