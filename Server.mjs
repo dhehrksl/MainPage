@@ -245,8 +245,16 @@ const findClickableByText = async (page, text) => {
       document.querySelectorAll("button, a, [role=button], input[type=button], input[type=submit]")
     );
     const norm = (s) => (s || "").replace(/\s+/g, " ").trim();
+    // 텍스트/aria-label/value가 다 비어있는 아이콘 전용 버튼은 URL→TC 생성 때
+    // 클래스명(예: header__partner-button)을 힌트로 대신 썼을 수 있어서, 여기서도
+    // 같은 순서로 폴백해야 그 TC를 실행할 수 있다.
+    const classHint = (el) => {
+      const cls = typeof el.className === "string" ? el.className : "";
+      return cls.split(/\s+/).find((c) => c.length > 3) || "";
+    };
     return candidates.find((el) => {
-      const label = norm(el.textContent) || norm(el.getAttribute("aria-label")) || norm(el.value);
+      const label =
+        norm(el.textContent) || norm(el.getAttribute("aria-label")) || norm(el.value) || classHint(el);
       return label.includes(searchText);
     }) || null;
   }, text);
