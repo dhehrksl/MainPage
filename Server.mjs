@@ -339,10 +339,14 @@ const runTestcase = async (tc) => {
     await page.goto(tc.sourceUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
     await new Promise((r) => setTimeout(r, 2000));
 
+    // assertUrlChange는 "테스트 시작 시점"과 비교해야 한다 — 바로 앞 단계(클릭 등)에서
+    // 이미 이동이 끝난 뒤에 현재 URL을 기준으로 잡으면 자기 자신과 비교하는 꼴이 되어
+    // 항상 "변화 없음"으로 오판정된다.
+    const initialUrl = page.url();
     for (let i = 0; i < tc.actions.length; i++) {
       const action = { ...tc.actions[i] };
-      if (action.type === "assertUrlChange" && !action.beforeUrl) {
-        action.beforeUrl = page.url();
+      if (action.type === "assertUrlChange") {
+        action.beforeUrl = initialUrl;
       }
       await performAction(page, action, i);
     }
