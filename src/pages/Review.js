@@ -5,7 +5,7 @@ import {
   PageWrapper, PageHeader, PageTitle, PageSubtitle,
   Card, Button, Grid, Flex, Badge, Select, EmptyState, colors,
 } from "../styles/theme";
-import { fetchTestcases, fetchBugs, fetchReportSummary } from "../api/client";
+import { fetchTestcases, fetchBugs, fetchReportSummary, fetchTestRuns } from "../api/client";
 
 const PERIODS = [
   { key: "all", label: "전체" },
@@ -20,7 +20,9 @@ const Review = () => {
   const [summary, setSummary] = useState(null); // 서버 집계
   const [selectedCategory, setSelectedCategory] = useState("All");
   const [period, setPeriod] = useState("all");
-  const [tab, setTab] = useState("overview"); // overview | category | assignee | link
+  const [tab, setTab] = useState("overview"); // overview | category | assignee | link | autoruns
+  const [testRuns, setTestRuns] = useState([]);
+  const [expandedRunId, setExpandedRunId] = useState(null);
 
   const reload = async () => {
     const [{ data: tcs, source: s1 }, { data: bs }] = await Promise.all([
@@ -35,6 +37,13 @@ const Review = () => {
     const range = periodToRange(period);
     const { data } = await fetchReportSummary(range);
     setSummary(data);
+
+    try {
+      const runs = await fetchTestRuns();
+      setTestRuns(runs);
+    } catch {
+      setTestRuns([]);
+    }
   };
 
   useEffect(() => { reload(); /* eslint-disable-next-line */ }, [period]);
@@ -106,6 +115,15 @@ const Review = () => {
       })
       .sort((a, b) => b.bugs.length - a.bugs.length);
   }, [testcases, inRangeBugs]);
+
+  const runStats = useMemo(() => {
+    const total = testRuns.length;
+    const pass = testRuns.filter((r) => r.status === "Pass").length;
+    const fail = testRuns.filter((r) => r.status === "Fail").length;
+    const error = testRuns.filter((r) => r.status === "Error").length;
+    const passRate = total > 0 ? Math.round((pass / total) * 100) : 0;
+    return { total, pass, fail, error, passRate };
+  }, [testRuns]);
 
   const exportReport = () => {
     const summaryData = [
@@ -235,6 +253,7 @@ const Review = () => {
             <TabBtn $active={tab === "category"} onClick={() => setTab("category")}>카테고리 분석</TabBtn>
             <TabBtn $active={tab === "assignee"} onClick={() => setTab("assignee")}>담당자별 버그</TabBtn>
             <TabBtn $active={tab === "link"} onClick={() => setTab("link")}>TC ↔ 버그 연결 ({linked.length})</TabBtn>
+            <TabBtn $active={tab === "autoruns"} onClick={() => setTab("autoruns")}>자동 실행 이력 ({testRuns.length})</TabBtn>
           </TabBar>
 
           {/* ──── 개요 탭 ──── */}
@@ -473,6 +492,52 @@ const Review = () => {
                     </div>
                   </LinkCard>
                 ))
+              )}
+            </Card>
+          )}
+
+          {/* ──── 자동 실행 이력 탭 ──── */}
+          {tab === "autoruns" && (
+            <Card style={{ marginTop: 20 }}>
+              <CardTitle>TC 자동 실행 이력</CardTitle>
+              <p style={{ fontSize: "0.85rem", color: colors.textSecondary, marginBottom: 16 }}>
+                URL→TC 생성 시 함께 만들어진 실행 스크립트를 헤드리스 브라우저로 재현해 자동으로 Pass/Fail을 판정한 기록입니다.
+              </p>
+              {testRuns.length === 0 ? (
+                <EmptyState><p>아직 자동 실행 이력이 없습니다. TC 관리에서 "자동 실행"을 눌러보세요.</p></EmptyState>
+              ) : (
+                <>
+                  <Grid $cols="repeat(4, 1fr)" $gap="12px" style={{ marginBottom: 20 }}>
+                    <MiniCard><span style={{ fontSize: "1.3rem", fontWeight: 700 }}>{runStats.total}</span><span style={{ fontSize: "0.8rem", color: colors.textSecondary }}>총 실행</span></MiniCard>
+                    <MiniCard><span style={{ fontSize: "1.3rem", fontWeight: 700, color: colors.success }}>{runStats.pass}</span><span style={{ fontSize: "0.8rem", color: colors.textSecondary }}>Pass</span></MiniCard>
+                    <MiniCard><span style={{ fontSize: "1.3rem", fontWeight: 700, color: colors.danger }}>{runStats.fail}</span><span style={{ fontSize: "0.8rem", color: colors.textSecondary }}>Fail</span></MiniCard>
+                    <MiniCard><span style={{ fontSize: "1.3rem", fontWeight: 700, color: runStats.passRate >= 80 ? colors.success : runStats.passRate >= 50 ? colors.warning : colors.danger }}>{runStats.passRate}%</span><span style={{ fontSize: "0.8rem", color: colors.textSecondary }}>성공률</span></MiniCard>
+                  </Grid>
+
+                  {testRuns.map((run) => {
+                    const isOpen = expandedRunId === run.id;
+                    return (
+                      <RunCard key={run.id} onClick={() => setExpandedRunId(isOpen ? null : run.id)}>
+                        <Flex $justify="space-between" $wrap>
+                          <Flex $gap="10px">
+                            <Badge $color={run.status === "Pass" ? "success" : run.status === "Fail" ? "danger" : "gray"}>{run.status}</Badge>
+                            <span style={{ fontFamily: "monospace", fontSize: "0.8rem", color: colors.textSecondary }}>{run.tcId}</span>
+                            <strong style={{ fontSize: "0.9rem" }}>{run.tcTitle}</strong>
+                          </Flex>
+                          <span style={{ fontSize: "0.78rem", color: colors.textSecondary }}>
+                            {new Date(run.createdAt).toLocaleString("ko-KR")} · {run.durationMs ? `${(run.durationMs / 1000).toFixed(1)}초` : "-"}
+                          </span>
+                        </Flex>
+                        {run.message && (
+                          <p style={{ margin: "8px 0 0", fontSize: "0.85rem", color: colors.textSecondary }}>{run.message}</p>
+                        )}
+                        {isOpen && run.screenshot && (
+                          <RunScreenshot src={`data:image/png;base64,${run.screenshot}`} alt="실행 실패 스크린샷" onClick={(e) => e.stopPropagation()} />
+                        )}
+                      </RunCard>
+                    );
+                  })}
+                </>
               )}
             </Card>
           )}
@@ -832,6 +897,25 @@ const LinkedBug = styled.div`
   border-radius: 6px;
   margin-top: 6px;
   font-size: 0.88rem;
+`;
+
+// 자동 실행 이력 카드
+const RunCard = styled.div`
+  padding: 12px 14px;
+  margin-bottom: 8px;
+  background: ${colors.bgMain};
+  border: 1px solid ${colors.border};
+  border-radius: 8px;
+  cursor: pointer;
+  transition: border-color 0.15s;
+  &:hover { border-color: ${colors.primary}; }
+`;
+
+const RunScreenshot = styled.img`
+  max-width: 100%;
+  margin-top: 10px;
+  border: 1px solid ${colors.border};
+  border-radius: 6px;
 `;
 
 export default Review;
