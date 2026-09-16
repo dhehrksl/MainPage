@@ -683,32 +683,12 @@ app.post("/generate-test", (req, res) => {
 // ─────────────────────────────────────
 // 5-1) URL → TC 자동 생성 (Puppeteer + Gemini Vision)
 // ─────────────────────────────────────
-app.post("/api/tc-from-url", async (req, res) => {
-  const { url, numTCs = 10, useScreenshot = false } = req.body;
-
-  if (!url || typeof url !== "string") {
-    return res.status(400).json({ error: "URL이 필요합니다." });
-  }
-  if (!/^https?:\/\//i.test(url)) {
-    return res.status(400).json({ error: "http:// 또는 https:// 로 시작하는 URL만 지원합니다." });
-  }
-
-  console.log("\n========== URL→TC 생성 요청 ==========");
-  console.log("URL:", url);
-
+// URL 하나를 열어서 페이지 구조(헤딩/버튼/링크/입력필드)를 뽑아온다.
+// URL→TC 생성과 자연어 즉석 테스트 둘 다 이 함수로 페이지를 "읽는다".
+const scrapePage = async (url, useScreenshot) => {
   let browser;
   try {
-    browser = await puppeteer.launch({
-      headless: true,
-      args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        // 메모리가 작은 서버(1GB 등)에서 /dev/shm 부족으로 크롬이 죽는 걸 방지
-        "--disable-dev-shm-usage",
-        "--disable-gpu",
-        "--single-process",
-      ],
-    });
+    browser = await puppeteer.launch({ headless: true, args: PUPPETEER_SAFE_ARGS });
     const page = await browser.newPage();
     await page.setViewport({ width: 1280, height: 900 });
     await page.setUserAgent(
@@ -796,8 +776,30 @@ app.post("/api/tc-from-url", async (req, res) => {
 
     await browser.close();
     browser = null;
-
     console.log(`페이지 수집 완료: title="${pageInfo.title}", buttons=${pageInfo.buttons.length}, inputs=${pageInfo.inputs.length}, screenshot=${useScreenshot ? "포함" : "생략"}`);
+    return { pageInfo, screenshotBase64 };
+  } finally {
+    if (browser) {
+      try { await browser.close(); } catch {}
+    }
+  }
+};
+
+app.post("/api/tc-from-url", async (req, res) => {
+  const { url, numTCs = 10, useScreenshot = false } = req.body;
+
+  if (!url || typeof url !== "string") {
+    return res.status(400).json({ error: "URL이 필요합니다." });
+  }
+  if (!/^https?:\/\//i.test(url)) {
+    return res.status(400).json({ error: "http:// 또는 https:// 로 시작하는 URL만 지원합니다." });
+  }
+
+  console.log("\n========== URL→TC 생성 요청 ==========");
+  console.log("URL:", url);
+
+  try {
+    const { pageInfo, screenshotBase64 } = await scrapePage(url, useScreenshot);
 
     // Gemini 호출 (vision 지원 모델 우선 순회)
     const sourceDesc = useScreenshot
@@ -966,9 +968,7 @@ actions는 description의 단계 순서와 정확히 대응해야 하고, 마지
     });
   } catch (err) {
     console.error("❌ URL→TC 생성 오류:", err);
-    if (browser) {
-      try { await browser.close(); } catch {}
-    }
+    // scrapePage()가 자체 finally에서 브라우저를 정리하므로 여기서 더 닫을 게 없다.
 
     // 에러 유형별 친절한 메시지
     let userMessage = err.message || "페이지 분석 중 오류가 발생했습니다.";
@@ -992,6 +992,115 @@ actions는 description의 단계 순서와 정확히 대응해야 하고, 마지
     }
 
     res.status(statusCode).json({ error: userMessage });
+  }
+});
+
+// ─────────────────────────────────────
+// 5-2) 자연어 즉석 테스트 — "이 페이지에서 ~해봐"를 한 줄로 입력하면
+// 그 자리에서 실행까지 끝내고 결과를 보여준다. URL→TC 생성(여러 개를 뽑아
+// 목록에 저장)과 달리, 딱 하나를 즉시 만들어서 바로 실행하는 용도다.
+// ─────────────────────────────────────
+app.post("/api/nl-test", async (req, res) => {
+  const { url, instruction } = req.body;
+
+  if (!url || typeof url !== "string" || !/^https?:\/\//i.test(url)) {
+    return res.status(400).json({ error: "http:// 또는 https:// 로 시작하는 URL이 필요합니다." });
+  }
+  if (!instruction || typeof instruction !== "string" || !instruction.trim()) {
+    return res.status(400).json({ error: "어떤 걸 테스트할지 자연어로 입력해주세요." });
+  }
+
+  console.log("\n========== 자연어 즉석 테스트 ==========");
+  console.log("URL:", url, "| 지시:", instruction);
+
+  try {
+    const { pageInfo } = await scrapePage(url, false);
+
+    const prompt = `너는 QA 엔지니어를 돕는 어시스턴트야. 사용자가 자연어로 설명한 테스트 시나리오를, 실제 페이지 요소에 근거해서 실행 가능한 테스트 케이스로 바꿔줘.
+
+URL: ${url}
+페이지 타이틀: ${pageInfo.title}
+버튼: ${JSON.stringify(pageInfo.buttons)}
+링크: ${JSON.stringify(pageInfo.links)}
+입력 필드: ${JSON.stringify(pageInfo.inputs)}
+
+사용자가 원하는 테스트: "${instruction}"
+
+요구사항:
+- click/type에 쓰는 text는 위 버튼/링크/입력필드 목록에 실제로 있는 것만 사용할 것 — 지시에 언급된 표현과 가장 비슷한 실제 항목을 골라 쓸 것.
+- actions는 반드시 이 4종류만 사용: {"type":"click","text":"..."} / {"type":"type","targetHint":"...","text":"..."} / {"type":"assertText","text":"..."} / {"type":"assertUrlChange"}
+- 마지막 액션은 반드시 검증(assertText 또는 assertUrlChange)이어야 한다. 사용자 지시에 결과 언급이 없다면 상식적으로 관찰 가능한 결과를 스스로 판단해서 검증 조건을 만들 것.
+- description은 "1. ... 2. ..." 형태, expectedResult는 한국어 한 문장.
+
+다음 JSON 형식으로만 응답해줘. 다른 설명이나 마크다운 코드블록 없이 순수 JSON만:
+{
+  "title": "TC 제목",
+  "description": "1. ... \\n2. ...",
+  "expectedResult": "기대 결과",
+  "actions": [ { "type": "click", "text": "..." } ]
+}`;
+
+    const { response, modelUsed } = await generateContentWithFallback(prompt);
+    const rawText = response.text();
+    console.log(`Gemini 응답 (모델: ${modelUsed}):`, rawText);
+
+    let parsed;
+    try {
+      const cleaned = rawText.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
+      parsed = JSON.parse(cleaned);
+    } catch {
+      const match = rawText.match(/\{[\s\S]*\}/);
+      if (match) parsed = JSON.parse(match[0]);
+      else throw new Error("AI 응답을 JSON으로 파싱할 수 없습니다.");
+    }
+
+    const ACTION_TYPES = new Set(["click", "type", "assertText", "assertUrlChange"]);
+    const actions = (Array.isArray(parsed.actions) ? parsed.actions : [])
+      .filter((a) => a && ACTION_TYPES.has(a.type))
+      .map((a) => {
+        if (a.type === "click") return { type: "click", text: String(a.text || "").trim() };
+        if (a.type === "type") return { type: "type", targetHint: String(a.targetHint || "").trim(), text: String(a.text || "").trim() };
+        if (a.type === "assertText") return { type: "assertText", text: String(a.text || "").trim() };
+        return { type: "assertUrlChange" };
+      })
+      .filter((a) => a.type === "assertUrlChange" || a.text);
+
+    if (actions.length === 0) {
+      return res.status(422).json({ error: "AI가 실행 가능한 액션을 만들지 못했습니다. 지시를 좀 더 구체적으로 적어보세요." });
+    }
+
+    const tcLike = {
+      title: String(parsed.title || instruction).trim(),
+      description: String(parsed.description || "").trim(),
+      expectedResult: String(parsed.expectedResult || "").trim(),
+      priority: "Medium",
+      category: "자연어 테스트",
+      sourceUrl: url,
+      actions,
+    };
+
+    console.log(`즉석 실행: ${tcLike.title} (액션 ${actions.length}개)`);
+    const result = await runTestcase(tcLike);
+    const diagnosis = result.status === "Fail" ? await diagnoseFailure(tcLike, result) : "";
+    console.log(`→ ${result.status}${diagnosis ? " | AI 진단: " + diagnosis : ""}`);
+
+    res.json({
+      ...tcLike,
+      status: result.status,
+      message: result.message,
+      screenshot: result.screenshot,
+      aiDiagnosis: diagnosis,
+      durationMs: result.durationMs,
+    });
+  } catch (err) {
+    console.error("❌ 자연어 즉석 테스트 오류:", err);
+    let userMessage = err.message || "테스트 실행 중 오류가 발생했습니다.";
+    if (err.status === 429) {
+      userMessage = "Gemini API 쿼터 초과 — 잠시 후 다시 시도해주세요.";
+    } else if (/timeout|Navigation timeout/i.test(err.message || "")) {
+      userMessage = "페이지 로딩 시간 초과 — 봇 차단이 있는 사이트일 수 있습니다.";
+    }
+    res.status(500).json({ error: userMessage });
   }
 });
 

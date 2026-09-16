@@ -261,6 +261,14 @@ export const generateTCFromUrl = async (url, numTCs = 10, useScreenshot = false)
   });
 };
 
+// 자연어 한 줄 → 그 자리에서 TC 생성 + 실행까지 끝내고 결과를 돌려준다.
+export const runNaturalLanguageTest = async (url, instruction) => {
+  return request("/api/nl-test", {
+    method: "POST",
+    body: JSON.stringify({ url, instruction }),
+  });
+};
+
 // ───────── Report ─────────
 export const fetchReportSummary = async ({ from, to } = {}) => {
   const q = new URLSearchParams();

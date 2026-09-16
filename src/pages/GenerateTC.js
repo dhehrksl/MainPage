@@ -3,9 +3,9 @@ import { useNavigate } from "react-router-dom";
 import styled from "styled-components";
 import {
   PageWrapper, PageHeader, PageTitle, PageSubtitle,
-  Card, Button, Input, Select, Badge, Flex, Spinner, colors,
+  Card, Button, Input, Select, TextArea, Badge, Flex, Spinner, colors,
 } from "../styles/theme";
-import { generateTCFromUrl, bulkImportTestcases } from "../api/client";
+import { generateTCFromUrl, bulkImportTestcases, runNaturalLanguageTest, createTestcase } from "../api/client";
 
 const GenerateTC = () => {
   const navigate = useNavigate();
@@ -17,6 +17,59 @@ const GenerateTC = () => {
   const [error, setError] = useState("");
   const [result, setResult] = useState(null); // { url, pageTitle, testcases, meta }
   const [selectedIdx, setSelectedIdx] = useState(new Set());
+
+  // 자연어 즉석 테스트
+  const [nlUrl, setNlUrl] = useState("");
+  const [nlInstruction, setNlInstruction] = useState("");
+  const [nlLoading, setNlLoading] = useState(false);
+  const [nlError, setNlError] = useState("");
+  const [nlResult, setNlResult] = useState(null);
+  const [nlSaving, setNlSaving] = useState(false);
+  const [nlSaved, setNlSaved] = useState(false);
+
+  const handleNlTest = async () => {
+    const url = nlUrl.trim();
+    if (!url || !/^https?:\/\//i.test(url)) {
+      setNlError("http:// 또는 https:// 로 시작하는 URL을 입력하세요.");
+      return;
+    }
+    if (!nlInstruction.trim()) {
+      setNlError("어떤 걸 테스트할지 문장으로 입력하세요.");
+      return;
+    }
+    setNlLoading(true);
+    setNlError("");
+    setNlResult(null);
+    setNlSaved(false);
+    try {
+      const data = await runNaturalLanguageTest(url, nlInstruction.trim());
+      setNlResult(data);
+    } catch (err) {
+      setNlError(err.message || "실행 실패");
+    } finally {
+      setNlLoading(false);
+    }
+  };
+
+  const handleSaveNlResult = async () => {
+    if (!nlResult) return;
+    setNlSaving(true);
+    try {
+      await createTestcase({
+        title: nlResult.title,
+        description: nlResult.description,
+        expectedResult: nlResult.expectedResult,
+        priority: nlResult.priority,
+        category: nlResult.category,
+        sourceUrl: nlResult.sourceUrl,
+        actions: nlResult.actions,
+        status: nlResult.status === "Pass" ? "Pass" : nlResult.status === "Fail" ? "Fail" : "Pending",
+      });
+      setNlSaved(true);
+    } finally {
+      setNlSaving(false);
+    }
+  };
 
   const handleGenerate = async () => {
     const url = urlInput.trim();
@@ -71,6 +124,91 @@ const GenerateTC = () => {
         <PageTitle>URL로 TC 자동 생성</PageTitle>
         <PageSubtitle>페이지 URL을 입력하면 AI가 페이지 구조(선택 시 스크린샷 포함)를 분석해 테스트 케이스를 생성합니다</PageSubtitle>
       </PageHeader>
+
+      {/* 자연어 즉석 테스트 — 한 줄 지시 → 그 자리에서 실행까지 */}
+      <Card style={{ marginBottom: 20, borderColor: colors.info }}>
+        <Flex $gap="8px" style={{ marginBottom: 12 }}>
+          <span className="material-icons" style={{ color: colors.info }}>bolt</span>
+          <h3 style={{ margin: 0, fontSize: "1rem" }}>자연어로 즉석 테스트</h3>
+        </Flex>
+        <PageSubtitle style={{ marginBottom: 16 }}>
+          "검색창에 블라우스를 검색해봐" 처럼 한 문장으로 지시하면, AI가 바로 실행 가능한 테스트로 바꿔서 그 자리에서 실행하고 결과를 보여줍니다.
+        </PageSubtitle>
+        <FormGroup>
+          <label>페이지 URL</label>
+          <Input
+            value={nlUrl}
+            onChange={(e) => setNlUrl(e.target.value)}
+            placeholder="https://example.com"
+            disabled={nlLoading}
+            style={{ width: "100%" }}
+          />
+        </FormGroup>
+        <FormGroup>
+          <label>테스트하고 싶은 것 (자연어)</label>
+          <TextArea
+            value={nlInstruction}
+            onChange={(e) => setNlInstruction(e.target.value)}
+            placeholder="예: 검색창에 '블라우스'를 입력하고 검색해봐"
+            rows={2}
+            disabled={nlLoading}
+            style={{ width: "100%" }}
+          />
+        </FormGroup>
+        <Flex $justify="flex-end">
+          <Button $variant="primary" onClick={handleNlTest} disabled={nlLoading} style={{ background: colors.info }}>
+            <span className="material-icons" style={{ fontSize: 18 }}>{nlLoading ? "hourglass_top" : "play_circle"}</span>
+            {nlLoading ? "생성 + 실행 중..." : "지금 실행"}
+          </Button>
+        </Flex>
+
+        {nlError && (
+          <ErrorBanner style={{ marginTop: 12 }}>
+            <span className="material-icons" style={{ fontSize: 18 }}>error_outline</span>
+            {nlError}
+          </ErrorBanner>
+        )}
+
+        {nlLoading && (
+          <div style={{ textAlign: "center", padding: "20px 0" }}>
+            <Spinner />
+            <p style={{ color: colors.textSecondary, fontSize: "0.85rem", marginTop: 8 }}>
+              페이지 분석 → 테스트 생성 → 실제 실행 중 (약 15~30초)
+            </p>
+          </div>
+        )}
+
+        {nlResult && !nlLoading && (
+          <NlResultBox>
+            <Flex $justify="space-between" $wrap style={{ marginBottom: 10 }}>
+              <strong style={{ fontSize: "0.95rem" }}>{nlResult.title}</strong>
+              <NlStatusBadge $status={nlResult.status}>{nlResult.status}</NlStatusBadge>
+            </Flex>
+            <p style={{ fontSize: "0.85rem", color: colors.textSecondary, whiteSpace: "pre-line", margin: "0 0 8px" }}>{nlResult.description}</p>
+            <p style={{ fontSize: "0.85rem", margin: "0 0 8px" }}><strong>기대 결과:</strong> {nlResult.expectedResult}</p>
+            {nlResult.message && <p style={{ fontSize: "0.85rem", color: colors.danger, margin: "0 0 8px" }}>{nlResult.message}</p>}
+            {nlResult.aiDiagnosis && (
+              <AiDiagnosisBox>
+                <span className="material-icons" style={{ fontSize: 16, verticalAlign: "-3px" }}>smart_toy</span>
+                {" "}{nlResult.aiDiagnosis}
+              </AiDiagnosisBox>
+            )}
+            {nlResult.screenshot && (
+              <img
+                src={`data:image/png;base64,${nlResult.screenshot}`}
+                alt="실행 결과 스크린샷"
+                style={{ maxWidth: "100%", marginTop: 10, border: `1px solid ${colors.border}`, borderRadius: 8 }}
+              />
+            )}
+            <Flex $justify="flex-end" style={{ marginTop: 12 }}>
+              <Button $variant="success" onClick={handleSaveNlResult} disabled={nlSaving || nlSaved}>
+                <span className="material-icons" style={{ fontSize: 18 }}>save</span>
+                {nlSaved ? "TC로 저장됨" : nlSaving ? "저장 중..." : "TC로 저장"}
+              </Button>
+            </Flex>
+          </NlResultBox>
+        )}
+      </Card>
 
       <Card>
         <FormGroup>
@@ -238,6 +376,38 @@ const ErrorBanner = styled.div`
 
 const ResultCard = styled(Card)`
   margin-top: 20px;
+`;
+
+const NlResultBox = styled.div`
+  margin-top: 16px;
+  padding: 14px 16px;
+  background: ${colors.bgMain};
+  border: 1px solid ${colors.border};
+  border-radius: 10px;
+`;
+
+const NlStatusBadge = styled.span`
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  white-space: nowrap;
+  color: ${({ $status }) =>
+    $status === "Pass" ? colors.success : $status === "Fail" ? colors.danger : colors.gray};
+  background: ${({ $status }) =>
+    $status === "Pass" ? colors.successLight : $status === "Fail" ? colors.dangerLight : colors.border};
+`;
+
+const AiDiagnosisBox = styled.div`
+  margin: 8px 0;
+  padding: 10px 12px;
+  background: ${colors.infoLight};
+  color: ${colors.dark};
+  border-radius: 8px;
+  font-size: 0.82rem;
+  line-height: 1.5;
 `;
 
 const ResultSummary = styled.div`
