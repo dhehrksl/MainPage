@@ -136,6 +136,7 @@ const TestcaseSchema = new mongoose.Schema(
     lastRunStatus: String, // Pass | Fail | Error | null(아직 실행 안 함)
     lastRunAt: Date,
     lastRunMessage: String,
+    lastRunDiagnosis: String, // 실패 시 AI가 추정한 원인/다음 액션
   },
   { timestamps: true }
 );
@@ -147,6 +148,7 @@ const TestRunSchema = new mongoose.Schema(
     status: { type: String, required: true }, // Pass | Fail | Error
     message: String, // 실패/에러 사유
     screenshot: String, // 실패했을 때만 base64 PNG 저장 (용량 절약)
+    aiDiagnosis: String, // 실패했을 때 Gemini가 추정한 원인/다음 액션 (선택적)
     durationMs: Number,
   },
   { timestamps: true }
@@ -370,6 +372,30 @@ const runTestcase = async (tc) => {
     if (browser) {
       try { await browser.close(); } catch {}
     }
+  }
+};
+
+// 실패한 실행 결과를 Gemini에게 보여주고 원인과 다음 액션을 짧게 설명받는다.
+// 진단 자체가 실패해도(쿼터 초과 등) 절대 throw하지 않는다 — 진단은 부가 정보일 뿐,
+// 실행 결과 자체를 막아서는 안 된다.
+const diagnoseFailure = async (tc, result) => {
+  try {
+    const prompt = `너는 QA 엔지니어를 돕는 어시스턴트야. 아래는 자동 실행한 테스트 케이스가 실패한 기록이야. 왜 실패했을지 원인을 1~2문장으로 추정하고, 사람이 다음에 뭘 확인/수정하면 좋을지 1문장으로 제안해줘. 확신 없는 추측은 "~일 가능성이 있습니다"처럼 표현하고, 모르면 모른다고 해. 마크다운이나 목록 기호 없이 짧은 평문 2~3문장으로만 답해.
+
+TC 제목: ${tc.title}
+TC 설명: ${tc.description}
+기대 결과: ${tc.expectedResult}
+실행 중 발생한 에러: ${result.message}`;
+
+    const parts = [{ text: prompt }];
+    if (result.screenshot) {
+      parts.push({ inlineData: { mimeType: "image/png", data: result.screenshot } });
+    }
+    const { response } = await generateContentWithFallback(parts);
+    return response.text().trim();
+  } catch (err) {
+    console.warn("⚠️  실패 원인 진단 실패:", err.message);
+    return "";
   }
 };
 
@@ -1037,9 +1063,13 @@ app.post("/api/testcases/:id/run", requireDb, async (req, res) => {
   const result = await runTestcase(tc);
   console.log(`→ ${result.status} (${result.durationMs}ms)${result.message ? " — " + result.message : ""}`);
 
+  // 실패했을 때만 AI 진단을 추가로 받는다 (성공한 건 진단할 게 없음)
+  const diagnosis = result.status === "Fail" ? await diagnoseFailure(tc, result) : "";
+  if (diagnosis) console.log(`   AI 진단: ${diagnosis}`);
+
   await Testcase.updateOne(
     { tcId: req.params.id },
-    { $set: { lastRunStatus: result.status, lastRunAt: new Date(), lastRunMessage: result.message || "" } }
+    { $set: { lastRunStatus: result.status, lastRunAt: new Date(), lastRunMessage: result.message || "", lastRunDiagnosis: diagnosis } }
   );
   await TestRun.create({
     tcId: req.params.id,
@@ -1047,6 +1077,7 @@ app.post("/api/testcases/:id/run", requireDb, async (req, res) => {
     status: result.status,
     message: result.message || "",
     screenshot: result.screenshot || null,
+    aiDiagnosis: diagnosis,
     durationMs: result.durationMs,
   });
 
@@ -1055,6 +1086,7 @@ app.post("/api/testcases/:id/run", requireDb, async (req, res) => {
     status: result.status,
     message: result.message,
     screenshot: result.screenshot,
+    aiDiagnosis: diagnosis,
     durationMs: result.durationMs,
   });
 });
@@ -1074,9 +1106,12 @@ app.post("/api/testcases/run-batch", requireDb, async (req, res) => {
     const result = await runTestcase(tc);
     console.log(`→ ${tc.tcId} ${result.status}${result.message ? " — " + result.message : ""}`);
 
+    const diagnosis = result.status === "Fail" ? await diagnoseFailure(tc, result) : "";
+    if (diagnosis) console.log(`   AI 진단: ${diagnosis}`);
+
     await Testcase.updateOne(
       { tcId: tc.tcId },
-      { $set: { lastRunStatus: result.status, lastRunAt: new Date(), lastRunMessage: result.message || "" } }
+      { $set: { lastRunStatus: result.status, lastRunAt: new Date(), lastRunMessage: result.message || "", lastRunDiagnosis: diagnosis } }
     );
     await TestRun.create({
       tcId: tc.tcId,
@@ -1084,10 +1119,11 @@ app.post("/api/testcases/run-batch", requireDb, async (req, res) => {
       status: result.status,
       message: result.message || "",
       screenshot: result.screenshot || null,
+      aiDiagnosis: diagnosis,
       durationMs: result.durationMs,
     });
 
-    results.push({ id: tc.tcId, title: tc.title, status: result.status, message: result.message, durationMs: result.durationMs });
+    results.push({ id: tc.tcId, title: tc.title, status: result.status, message: result.message, aiDiagnosis: diagnosis, durationMs: result.durationMs });
   }
 
   const summary = {

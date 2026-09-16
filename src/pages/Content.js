@@ -455,6 +455,12 @@ const Content = () => {
                                   <RunBadge $status={tc.lastRunStatus}>{tc.lastRunStatus}</RunBadge>
                                   {tc.lastRunAt && <span style={{ marginLeft: 8, color: colors.textSecondary, fontSize: "0.8rem" }}>{new Date(tc.lastRunAt).toLocaleString("ko-KR")}</span>}
                                   {tc.lastRunMessage && <div style={{ marginTop: 6 }}>{tc.lastRunMessage}</div>}
+                                  {(tc.lastRunDiagnosis || runResults[tc.id]?.aiDiagnosis) && (
+                                    <AiDiagnosisBox>
+                                      <span className="material-icons" style={{ fontSize: 16, verticalAlign: "-3px" }}>smart_toy</span>
+                                      {" "}{runResults[tc.id]?.aiDiagnosis || tc.lastRunDiagnosis}
+                                    </AiDiagnosisBox>
+                                  )}
                                 </DetailValue>
                               </DetailField>
                             )}
@@ -496,6 +502,16 @@ const RunBadge = styled.span`
   font-weight: 700;
   background: ${(p) => (runBadgeColors[p.$status] || runBadgeColors.Error).bg};
   color: ${(p) => (runBadgeColors[p.$status] || runBadgeColors.Error).text};
+`;
+
+const AiDiagnosisBox = styled.div`
+  margin-top: 8px;
+  padding: 8px 12px;
+  background: ${colors.infoLight};
+  color: #3730A3;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  line-height: 1.5;
 `;
 
 const ScreenshotImg = styled.img`

@@ -531,6 +531,12 @@ const Review = () => {
                         {run.message && (
                           <p style={{ margin: "8px 0 0", fontSize: "0.85rem", color: colors.textSecondary }}>{run.message}</p>
                         )}
+                        {run.aiDiagnosis && (
+                          <AiDiagnosisBox>
+                            <span className="material-icons" style={{ fontSize: 16, verticalAlign: "-3px" }}>smart_toy</span>
+                            {" "}{run.aiDiagnosis}
+                          </AiDiagnosisBox>
+                        )}
                         {isOpen && run.screenshot && (
                           <RunScreenshot src={`data:image/png;base64,${run.screenshot}`} alt="실행 실패 스크린샷" onClick={(e) => e.stopPropagation()} />
                         )}
@@ -916,6 +922,16 @@ const RunScreenshot = styled.img`
   margin-top: 10px;
   border: 1px solid ${colors.border};
   border-radius: 6px;
+`;
+
+const AiDiagnosisBox = styled.div`
+  margin-top: 8px;
+  padding: 8px 12px;
+  background: ${colors.infoLight};
+  color: #3730A3;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  line-height: 1.5;
 `;
 
 export default Review;
