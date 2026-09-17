@@ -18,6 +18,7 @@ const Problem = () => {
   const [searchTerm, setSearchTerm] = useState("");
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
+  const [expandedId, setExpandedId] = useState(null);
   const [form, setForm] = useState({
     title: "", description: "", stepsToReproduce: "",
     severity: "Major", priority: "Medium", status: "Open",
@@ -231,17 +232,28 @@ const Problem = () => {
               </tr>
             </thead>
             <tbody>
-              {filtered.map((bug) => (
-                <tr key={bug.id}>
+              {filtered.map((bug) => {
+                const isOpen = expandedId === bug.id;
+                return (
+                <React.Fragment key={bug.id}>
+                <tr onClick={() => setExpandedId(isOpen ? null : bug.id)} style={{ cursor: "pointer" }}>
                   <td style={{ fontFamily: "monospace", fontSize: "0.85rem" }}>{bug.id}</td>
-                  <td style={{ fontWeight: 500 }}>{bug.title}</td>
+                  <td style={{ fontWeight: 500 }}>
+                    {bug.title}
+                    {bug.relatedTC && (
+                      <span style={{ marginLeft: 8, fontSize: "0.72rem", color: colors.info, fontWeight: 600 }}>
+                        <span className="material-icons" style={{ fontSize: 13, verticalAlign: "-2px" }}>smart_toy</span>
+                        {" "}AI 자동 생성 · {bug.relatedTC}
+                      </span>
+                    )}
+                  </td>
                   <td>{severityBadge(bug.severity)}</td>
                   <td>
                     <Badge $color={bug.priority === "Urgent" || bug.priority === "High" ? "danger" : bug.priority === "Medium" ? "warning" : "gray"}>
                       {bug.priority}
                     </Badge>
                   </td>
-                  <td>
+                  <td onClick={(e) => e.stopPropagation()}>
                     <Select
                       value={bug.status}
                       onChange={(e) => handleStatusChange(bug.id, e.target.value)}
@@ -251,7 +263,7 @@ const Problem = () => {
                     </Select>
                   </td>
                   <td>{bug.assignee || "-"}</td>
-                  <td>
+                  <td onClick={(e) => e.stopPropagation()}>
                     <Flex $justify="center" $gap="6px">
                       <ActionBtn onClick={() => handleEdit(bug)} title="수정">
                         <span className="material-icons">edit</span>
@@ -262,7 +274,29 @@ const Problem = () => {
                     </Flex>
                   </td>
                 </tr>
-              ))}
+                {isOpen && (
+                  <tr>
+                    <td colSpan={7} style={{ background: colors.bgMain, padding: "14px 18px" }}>
+                      {bug.description && <p style={{ fontSize: "0.85rem", margin: "0 0 8px" }}><strong>상세 설명:</strong> {bug.description}</p>}
+                      {bug.stepsToReproduce && (
+                        <p style={{ fontSize: "0.85rem", margin: "0 0 8px", whiteSpace: "pre-line" }}>
+                          <strong>재현 절차:</strong>{"\n"}{bug.stepsToReproduce}
+                        </p>
+                      )}
+                      {bug.environment && <p style={{ fontSize: "0.8rem", color: colors.textSecondary, margin: "0 0 8px" }}><strong>환경:</strong> {bug.environment}</p>}
+                      {bug.screenshot && (
+                        <img
+                          src={`data:image/png;base64,${bug.screenshot}`}
+                          alt="버그 재현 스크린샷"
+                          style={{ maxWidth: "100%", maxHeight: 400, border: `1px solid ${colors.border}`, borderRadius: 8 }}
+                        />
+                      )}
+                    </td>
+                  </tr>
+                )}
+                </React.Fragment>
+                );
+              })}
             </tbody>
           </Table>
         )}

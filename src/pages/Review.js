@@ -5,7 +5,7 @@ import {
   PageWrapper, PageHeader, PageTitle, PageSubtitle,
   Card, Button, Grid, Flex, Badge, Select, EmptyState, colors,
 } from "../styles/theme";
-import { fetchTestcases, fetchBugs, fetchReportSummary, fetchTestRuns } from "../api/client";
+import { fetchTestcases, fetchBugs, fetchReportSummary, fetchTestRuns, generateBugReport } from "../api/client";
 
 const PERIODS = [
   { key: "all", label: "전체" },
@@ -23,6 +23,19 @@ const Review = () => {
   const [tab, setTab] = useState("overview"); // overview | category | assignee | link | autoruns
   const [testRuns, setTestRuns] = useState([]);
   const [expandedRunId, setExpandedRunId] = useState(null);
+  const [bugReportStatus, setBugReportStatus] = useState({}); // { [runId]: "loading" | { bugId } | { error } }
+
+  const handleGenerateBugReport = async (e, runId) => {
+    e.stopPropagation();
+    setBugReportStatus((prev) => ({ ...prev, [runId]: "loading" }));
+    try {
+      const bug = await generateBugReport(runId);
+      setBugReportStatus((prev) => ({ ...prev, [runId]: { bugId: bug.id } }));
+      await reload();
+    } catch (err) {
+      setBugReportStatus((prev) => ({ ...prev, [runId]: { error: err.message || "생성 실패" } }));
+    }
+  };
 
   const reload = async () => {
     const [{ data: tcs, source: s1 }, { data: bs }] = await Promise.all([
@@ -539,6 +552,29 @@ const Review = () => {
                         )}
                         {isOpen && run.screenshot && (
                           <RunScreenshot src={`data:image/png;base64,${run.screenshot}`} alt="실행 실패 스크린샷" onClick={(e) => e.stopPropagation()} />
+                        )}
+                        {(run.status === "Fail" || run.status === "Error") && (
+                          <Flex $justify="flex-end" $gap="8px" style={{ marginTop: 10 }}>
+                            {bugReportStatus[run.id]?.bugId ? (
+                              <span style={{ fontSize: "0.8rem", color: colors.success, fontWeight: 600 }}>
+                                <span className="material-icons" style={{ fontSize: 16, verticalAlign: "-3px" }}>check_circle</span>
+                                {" "}{bugReportStatus[run.id].bugId}로 등록됨 — 버그 리포트 탭에서 확인하세요
+                              </span>
+                            ) : (
+                              <Button
+                                $variant="danger"
+                                $size="sm"
+                                onClick={(e) => handleGenerateBugReport(e, run.id)}
+                                disabled={bugReportStatus[run.id] === "loading"}
+                              >
+                                <span className="material-icons" style={{ fontSize: 16 }}>bug_report</span>
+                                {bugReportStatus[run.id] === "loading" ? "작성 중..." : "버그 리포트 생성"}
+                              </Button>
+                            )}
+                            {bugReportStatus[run.id]?.error && (
+                              <span style={{ fontSize: "0.8rem", color: colors.danger }}>{bugReportStatus[run.id].error}</span>
+                            )}
+                          </Flex>
                         )}
                       </RunCard>
                     );

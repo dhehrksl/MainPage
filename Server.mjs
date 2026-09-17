@@ -166,6 +166,7 @@ const BugSchema = new mongoose.Schema(
     assignee: String,
     environment: String,
     relatedTC: String, // TC-0001 참조
+    screenshot: String, // AI 자동 생성 버그일 때만 채워짐 (실패 스크린샷 base64 PNG)
     resolvedAt: Date,
   },
   { timestamps: true }
@@ -397,6 +398,46 @@ TC 설명: ${tc.description}
     console.warn("⚠️  실패 원인 진단 실패:", err.message);
     return "";
   }
+};
+
+const BUG_SEVERITY_OPTIONS = ["Critical", "Major", "Minor", "Trivial"];
+const BUG_PRIORITY_BY_SEVERITY = { Critical: "Urgent", Major: "High", Minor: "Medium", Trivial: "Low" };
+
+// 실패한 실행 기록 하나를 받아 버그 트래커에 바로 등록할 수 있는 정식 버그 리포트 초안을 작성한다.
+// diagnoseFailure와 달리 이건 사람이 읽을 리포트 자체를 완성하는 게 목적이라 JSON으로 구조화해서 받는다.
+const generateBugReportFromRun = async (run) => {
+  const prompt = `너는 QA 엔지니어를 돕는 어시스턴트야. 아래는 자동 실행한 테스트 케이스가 실패한 기록이야. 이 내용을 바탕으로 버그 트래커에 바로 등록할 정식 버그 리포트를 작성해줘.
+
+TC 제목: ${run.tcTitle}
+실행 중 발생한 에러: ${run.message}
+AI 원인 진단(참고용): ${run.aiDiagnosis || "없음"}
+
+아래 JSON 형식으로만 답해. 코드블록이나 다른 설명 없이 JSON만.
+{
+  "title": "버그 제목 (한 문장, 실제 증상 중심, 추측성 표현 없이 단정적으로)",
+  "description": "무엇이 잘못됐는지 2~3문장 설명",
+  "stepsToReproduce": "1. ...\\n2. ...\\n3. ... 형식의 재현 절차",
+  "severity": "Critical|Major|Minor|Trivial 중 하나"
+}`;
+
+  const parts = [{ text: prompt }];
+  if (run.screenshot) {
+    parts.push({ inlineData: { mimeType: "image/png", data: run.screenshot } });
+  }
+  const { response } = await generateContentWithFallback(parts);
+  const rawText = response.text().trim();
+  const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) throw new Error("AI가 JSON 형식으로 응답하지 않았습니다.");
+  const parsed = JSON.parse(jsonMatch[0]);
+
+  const severity = BUG_SEVERITY_OPTIONS.includes(parsed.severity) ? parsed.severity : "Major";
+  return {
+    title: String(parsed.title || run.tcTitle).trim(),
+    description: String(parsed.description || run.message || "").trim(),
+    stepsToReproduce: String(parsed.stepsToReproduce || "").trim(),
+    severity,
+    priority: BUG_PRIORITY_BY_SEVERITY[severity],
+  };
 };
 
 // ─────────────────────────────────────
@@ -1251,6 +1292,39 @@ app.get("/api/test-runs", requireDb, async (req, res) => {
   res.json(
     list.map(({ _id, __v, ...rest }) => ({ id: _id, ...rest }))
   );
+});
+
+// 실패/에러로 끝난 실행 기록 하나를 골라 AI가 정식 버그 리포트를 작성하고 Bugs 목록에 바로 등록한다.
+app.post("/api/test-runs/:id/bug-report", requireDb, async (req, res) => {
+  try {
+    const run = await TestRun.findById(req.params.id).lean();
+    if (!run) return res.status(404).json({ error: "실행 기록을 찾을 수 없습니다." });
+    if (run.status !== "Fail" && run.status !== "Error") {
+      return res.status(400).json({ error: "실패한 실행 기록에서만 버그 리포트를 만들 수 있습니다." });
+    }
+
+    console.log(`\n========== 버그 리포트 자동 생성: ${run.tcId} ==========`);
+    const draft = await generateBugReportFromRun(run);
+
+    const bugId = await nextBugId();
+    const doc = await Bug.create({
+      bugId,
+      ...draft,
+      status: "Open",
+      relatedTC: run.tcId,
+      environment: "자동 실행 (Puppeteer)",
+      screenshot: run.screenshot || null,
+    });
+    const { _id, __v, bugId: bid, ...rest } = doc.toObject();
+    console.log(`→ ${bid} 등록됨: ${draft.title}`);
+    res.status(201).json({ id: bid, ...rest });
+  } catch (err) {
+    console.error("버그 리포트 생성 실패:", err.message);
+    if (/429|quota/i.test(err.message || "")) {
+      return res.status(429).json({ error: "AI 요청 한도를 초과했습니다. 잠시 후 다시 시도해주세요." });
+    }
+    res.status(500).json({ error: "버그 리포트 생성에 실패했습니다: " + err.message });
+  }
 });
 
 // ─────────────────────────────────────

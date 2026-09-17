@@ -147,6 +147,10 @@ export const fetchTestRuns = async (tcId) => {
   return request(`/api/test-runs${q}`);
 };
 
+// 실패한 실행 기록 하나를 골라 AI가 버그 리포트를 작성하고 Bugs 목록에 바로 등록한다.
+export const generateBugReport = (runId) =>
+  request(`/api/test-runs/${runId}/bug-report`, { method: "POST" });
+
 // ───────── Bugs ─────────
 const BUG_KEY = "qa_bugs";
 
