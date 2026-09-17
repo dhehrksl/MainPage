@@ -19,6 +19,7 @@ const Problem = () => {
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [expandedId, setExpandedId] = useState(null);
+  const [verifyingId, setVerifyingId] = useState(null);
   const [form, setForm] = useState({
     title: "", description: "", stepsToReproduce: "",
     severity: "Major", priority: "Medium", status: "Open",
@@ -77,8 +78,21 @@ const Problem = () => {
   };
 
   const handleStatusChange = async (id, status) => {
-    await updateBug(id, { status });
-    await reload();
+    // "Resolved"로 바꾸면 서버가 관련 TC를 자동 재실행해서 검증한다 — 10~30초 걸릴 수 있다.
+    if (status === "Resolved") setVerifyingId(id);
+    try {
+      const { data } = await updateBug(id, { status });
+      await reload();
+      if (data?.verifiedStatus) {
+        if (data.verifiedStatus === "Pass") {
+          window.alert(`자동 재검증 통과 — "${data.title}" 버그가 실제로 해결된 것을 확인했습니다.`);
+        } else {
+          window.alert(`자동 재검증 실패 — 아직 재현되어 자동으로 다시 Open 상태로 되돌렸습니다.\n\n${data.verifiedMessage || ""}`);
+        }
+      }
+    } finally {
+      setVerifyingId(null);
+    }
   };
 
   const filtered = bugs.filter((b) => {
@@ -254,13 +268,21 @@ const Problem = () => {
                     </Badge>
                   </td>
                   <td onClick={(e) => e.stopPropagation()}>
-                    <Select
-                      value={bug.status}
-                      onChange={(e) => handleStatusChange(bug.id, e.target.value)}
-                      style={{ padding: "4px 8px", fontSize: "0.8rem", border: "none", background: "transparent", fontWeight: 600 }}
-                    >
-                      {STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
-                    </Select>
+                    {verifyingId === bug.id ? (
+                      <span style={{ fontSize: "0.78rem", color: colors.textSecondary, display: "inline-flex", alignItems: "center", gap: 4 }}>
+                        <span className="material-icons" style={{ fontSize: 14 }}>hourglass_top</span>
+                        재검증 중...
+                      </span>
+                    ) : (
+                      <Select
+                        value={bug.status}
+                        onChange={(e) => handleStatusChange(bug.id, e.target.value)}
+                        disabled={!!verifyingId}
+                        style={{ padding: "4px 8px", fontSize: "0.8rem", border: "none", background: "transparent", fontWeight: 600 }}
+                      >
+                        {STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
+                      </Select>
+                    )}
                   </td>
                   <td>{bug.assignee || "-"}</td>
                   <td onClick={(e) => e.stopPropagation()}>
@@ -284,6 +306,17 @@ const Problem = () => {
                         </p>
                       )}
                       {bug.environment && <p style={{ fontSize: "0.8rem", color: colors.textSecondary, margin: "0 0 8px" }}><strong>환경:</strong> {bug.environment}</p>}
+                      {bug.relatedTC && <p style={{ fontSize: "0.8rem", color: colors.textSecondary, margin: "0 0 8px" }}><strong>관련 TC:</strong> {bug.relatedTC}</p>}
+                      {bug.verifiedStatus && (
+                        <p style={{
+                          fontSize: "0.82rem", margin: "0 0 8px", padding: "8px 12px", borderRadius: 8,
+                          background: bug.verifiedStatus === "Pass" ? colors.successLight : colors.dangerLight,
+                          color: bug.verifiedStatus === "Pass" ? "#166534" : "#991B1B",
+                        }}>
+                          <span className="material-icons" style={{ fontSize: 15, verticalAlign: "-3px" }}>smart_toy</span>
+                          {" "}<strong>자동 재검증 ({new Date(bug.verifiedAt).toLocaleString("ko-KR")}):</strong> {bug.verifiedMessage}
+                        </p>
+                      )}
                       {bug.screenshot && (
                         <img
                           src={`data:image/png;base64,${bug.screenshot}`}

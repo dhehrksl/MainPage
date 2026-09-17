@@ -168,6 +168,10 @@ const BugSchema = new mongoose.Schema(
     relatedTC: String, // TC-0001 참조
     screenshot: String, // AI 자동 생성 버그일 때만 채워짐 (실패 스크린샷 base64 PNG)
     resolvedAt: Date,
+    // ── "Resolved" 처리 시 관련 TC를 자동 재실행한 결과 (재검증 안 된 버그는 전부 비어있음) ──
+    verifiedAt: Date,
+    verifiedStatus: String, // Pass | Fail | Error
+    verifiedMessage: String,
   },
   { timestamps: true }
 );
@@ -1518,12 +1522,61 @@ app.put("/api/bugs/:id", requireDb, async (req, res) => {
     } else if (patch.status && !["Resolved", "Closed"].includes(patch.status)) {
       patch.resolvedAt = null;
     }
-    const updated = await Bug.findOneAndUpdate(
+
+    let updated = await Bug.findOneAndUpdate(
       { bugId: req.params.id },
       { $set: patch },
       { new: true }
     ).lean();
     if (!updated) return res.status(404).json({ error: "not found" });
+
+    // "Resolved"로 바뀌었고 자동 실행 가능한 TC와 연결돼 있으면, 사람 확인만 믿지 않고
+    // 그 자리에서 TC를 다시 돌려 실제로 고쳐졌는지 확인한다. 여전히 실패하면
+    // Resolved 표시를 그대로 믿지 않고 자동으로 Open으로 되돌린다.
+    if (patch.status === "Resolved" && updated.relatedTC) {
+      const tc = await Testcase.findOne({ tcId: updated.relatedTC }).lean();
+      if (tc && tc.sourceUrl && Array.isArray(tc.actions) && tc.actions.length > 0) {
+        console.log(`\n========== 버그 해결 자동 재검증: ${updated.bugId} → ${tc.tcId} ==========`);
+        const result = await runTestcase(tc);
+        const diagnosis = result.status === "Fail" ? await diagnoseFailure(tc, result) : "";
+        console.log(`→ ${result.status}${diagnosis ? " | AI 진단: " + diagnosis : ""}`);
+
+        await Testcase.updateOne(
+          { tcId: tc.tcId },
+          { $set: { lastRunStatus: result.status, lastRunAt: new Date(), lastRunMessage: result.message || "", lastRunDiagnosis: diagnosis } }
+        );
+        await TestRun.create({
+          tcId: tc.tcId,
+          tcTitle: tc.title,
+          status: result.status,
+          message: result.message || "",
+          screenshot: result.screenshot || null,
+          aiDiagnosis: diagnosis,
+          durationMs: result.durationMs,
+        });
+
+        const verifyPatch = {
+          verifiedAt: new Date(),
+          verifiedStatus: result.status,
+          verifiedMessage:
+            result.status === "Pass"
+              ? "자동 재검증 통과 — 실제로 해결된 것을 확인했습니다."
+              : `자동 재검증 실패 — 아직 재현됩니다. ${result.message || ""}`.trim(),
+        };
+        if (result.status !== "Pass") {
+          verifyPatch.status = "Open";
+          verifyPatch.resolvedAt = null;
+        }
+
+        updated = await Bug.findOneAndUpdate(
+          { bugId: req.params.id },
+          { $set: verifyPatch },
+          { new: true }
+        ).lean();
+        console.log(`→ ${updated.bugId} 최종 상태: ${updated.status}`);
+      }
+    }
+
     const { _id, __v, bugId, ...rest } = updated;
     res.json({ id: bugId, ...rest });
   } catch (e) {
