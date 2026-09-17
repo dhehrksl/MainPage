@@ -343,7 +343,7 @@ const runTestcase = async (tc) => {
     await page.setUserAgent(
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     );
-    await page.goto(tc.sourceUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
+    await page.goto(tc.sourceUrl, { waitUntil: "domcontentloaded", timeout: 45000 });
     await new Promise((r) => setTimeout(r, 2000));
 
     // assertUrlChange는 "테스트 시작 시점"과 비교해야 한다 — 바로 앞 단계(클릭 등)에서
@@ -821,7 +821,7 @@ const scrapePage = async (url, useScreenshot) => {
     // networkidle2는 광고/채팅위젯/분석 스크립트가 계속 통신하는 사이트에서
     // 네트워크가 절대 안 잠잠해져 타임아웃만 나기 쉽다. DOM만 준비되면 되므로
     // domcontentloaded로 받고, 지연 렌더링되는 요소를 위해 잠깐만 더 기다린다.
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45000 });
     await new Promise((resolve) => setTimeout(resolve, 2000));
 
     const pageInfo = await extractPageInfo(page);
@@ -894,7 +894,7 @@ const runAgenticNlTest = async (url, instruction) => {
     await page.setUserAgent(
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     );
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45000 });
     await new Promise((r) => setTimeout(r, 1500));
 
     let verdict = null; // { success, message } — finish 액션이나 스텝 한도 초과로 채워짐
