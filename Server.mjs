@@ -1228,6 +1228,21 @@ actions는 description의 단계 순서와 정확히 대응해야 하고, 마지
   }
 });
 
+// 이 엔진은 "화면 하나 보고 액션 하나 결정"을 반복할 뿐, 여러 항목의 값을
+// 한꺼번에 모아서 비교·정렬하는 능력은 없다 — click/type/assertText 중
+// 어떤 action에도 "여러 개 중 최솟값 찾기"에 해당하는 게 없기 때문이다.
+// "가장 싼 요금제 찾아줘" 같은 지시를 그냥 흘려보내면 AI가 아무 화면에서나
+// 그럴듯한 이름의 항목을 찍고 끝내버려서, 사용자 입장에선 왜 틀렸는지도
+// 알기 어려운 결과가 나온다. 실행 전에 걸러서 명확한 이유를 안내한다.
+const looksLikeComparisonRequest = (text) => {
+  if (/(최저가|최고가)/.test(text)) return true;
+  const superlative = /(가장|제일|최고|최저)/.test(text);
+  const cheapExpensive = /(싸|싼|저렴|비싸|비쌈)/.test(text);
+  const priceWord = /(가격|요금|금액|가격대)/.test(text);
+  const compareWord = /(비교|정렬|순위|랭킹|순으로)/.test(text);
+  return (superlative && cheapExpensive) || (priceWord && (compareWord || superlative));
+};
+
 // ─────────────────────────────────────
 // 5-2) 자연어 즉석 테스트 — "이 페이지에서 ~해봐"를 한 줄로 입력하면
 // 그 자리에서 실행까지 끝내고 결과를 보여준다. URL→TC 생성(여러 개를 뽑아
@@ -1241,6 +1256,11 @@ app.post("/api/nl-test", async (req, res) => {
   }
   if (!instruction || typeof instruction !== "string" || !instruction.trim()) {
     return res.status(400).json({ error: "어떤 걸 테스트할지 자연어로 입력해주세요." });
+  }
+  if (looksLikeComparisonRequest(instruction)) {
+    return res.status(422).json({
+      error: "이 기능은 클릭/입력 같은 단일 동작 확인에 특화되어 있어서, 여러 항목의 가격을 비교해야 하는 요청은 지원하지 않습니다. 특정 화면에서의 단일 동작(예: 'OO 요금제 버튼 클릭해봐')을 지시해주세요.",
+    });
   }
 
   console.log("\n========== 자연어 즉석 테스트 (에이전트 모드) ==========");
