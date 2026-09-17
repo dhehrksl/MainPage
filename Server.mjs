@@ -770,11 +770,23 @@ const extractPageInfo = (page) =>
           .map((b) => txt(b) || b.getAttribute("aria-label") || b.getAttribute("title") || b.value || classHint(b))
           .filter(Boolean)
       ).slice(0, 30),
-      links: dedupe(
-        Array.from(document.querySelectorAll("a"))
-          .map((a) => txt(a) || a.getAttribute("aria-label") || a.getAttribute("title") || classHint(a))
-          .filter(Boolean)
-      ).slice(0, 50),
+      links: (() => {
+        // 사이트 이동 메뉴(사이드바/헤더)가 링크 수백 개를 차지하는 사이트가 많다
+        // (예: 클리앙은 게시글 목록보다 앞서 나오는 메뉴 링크만 260개 중 60개).
+        // 캡을 그냥 등장 순서로 자르면 진짜 콘텐츠(게시글 제목 등)는 캡 밖으로
+        // 밀려서 AI가 아예 보지도 못한다. 메뉴 라벨은 보통 공백 없는 짧은 단어이고
+        // 실제 콘텐츠(게시글 제목 등)는 공백 섞인 문장에 가까우니, 문장형 링크를
+        // 먼저 채우고 남는 자리에 메뉴 링크를 채운다.
+        const all = dedupe(
+          Array.from(document.querySelectorAll("a"))
+            .map((a) => txt(a) || a.getAttribute("aria-label") || a.getAttribute("title") || classHint(a))
+            .filter(Boolean)
+        );
+        const looksLikeContent = (label) => label.length >= 8 && label.includes(" ");
+        const content = all.filter(looksLikeContent);
+        const chrome = all.filter((label) => !looksLikeContent(label));
+        return [...content, ...chrome].slice(0, 60);
+      })(),
       inputs: dedupeBy(
         Array.from(document.querySelectorAll("input, textarea, select")).map((i) => {
           const labelText = i.labels?.[0] ? txt(i.labels[0]) : "";
