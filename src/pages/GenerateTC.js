@@ -7,6 +7,20 @@ import {
 } from "../styles/theme";
 import { generateTCFromUrl, bulkImportTestcases, runNaturalLanguageTest, createTestcase } from "../api/client";
 
+// 데모/발표용 프리셋 — 봇 차단 없이 실제로 동작 확인된 조합만 넣는다 (라이브 시연 중 예측 불가한 실패를 피하기 위함).
+const NL_DEMO_PRESETS = [
+  {
+    label: "젤라또 · AI 상품 검색",
+    url: "https://gelatto.ai",
+    instruction: "검색창에 '5만원대 깔끔한 출근용 블라우스 찾아줘'라고 입력하고 검색해봐",
+  },
+  {
+    label: "위키피디아 · 언어별 검색",
+    url: "https://www.wikipedia.org",
+    instruction: "한국어로 이동해서 검색창에 Korea를 검색해줘",
+  },
+];
+
 const GenerateTC = () => {
   const navigate = useNavigate();
   const [urlInput, setUrlInput] = useState("");
@@ -27,13 +41,18 @@ const GenerateTC = () => {
   const [nlSaving, setNlSaving] = useState(false);
   const [nlSaved, setNlSaved] = useState(false);
 
-  const handleNlTest = async () => {
-    const url = nlUrl.trim();
+  // overrideUrl/overrideInstruction이 오면(데모 프리셋 클릭) state 업데이트를 기다리지 않고 바로 그 값으로 실행한다.
+  const handleNlTest = async (overrideUrl, overrideInstruction) => {
+    const url = (overrideUrl ?? nlUrl).trim();
+    const instruction = (overrideInstruction ?? nlInstruction).trim();
+    setNlUrl(url);
+    setNlInstruction(instruction);
+
     if (!url || !/^https?:\/\//i.test(url)) {
       setNlError("http:// 또는 https:// 로 시작하는 URL을 입력하세요.");
       return;
     }
-    if (!nlInstruction.trim()) {
+    if (!instruction) {
       setNlError("어떤 걸 테스트할지 문장으로 입력하세요.");
       return;
     }
@@ -42,7 +61,7 @@ const GenerateTC = () => {
     setNlResult(null);
     setNlSaved(false);
     try {
-      const data = await runNaturalLanguageTest(url, nlInstruction.trim());
+      const data = await runNaturalLanguageTest(url, instruction);
       setNlResult(data);
     } catch (err) {
       setNlError(err.message || "실행 실패");
@@ -134,6 +153,23 @@ const GenerateTC = () => {
         <PageSubtitle style={{ marginBottom: 16 }}>
           "검색창에 블라우스를 검색해봐" 처럼 한 문장으로 지시하면, AI가 바로 실행 가능한 테스트로 바꿔서 그 자리에서 실행하고 결과를 보여줍니다.
         </PageSubtitle>
+
+        <DemoPresetRow>
+          <span>데모 프리셋</span>
+          {NL_DEMO_PRESETS.map((preset) => (
+            <PresetChip
+              key={preset.label}
+              type="button"
+              disabled={nlLoading}
+              onClick={() => handleNlTest(preset.url, preset.instruction)}
+              title={`${preset.url} — ${preset.instruction}`}
+            >
+              <span className="material-icons" style={{ fontSize: 15 }}>play_arrow</span>
+              {preset.label}
+            </PresetChip>
+          ))}
+        </DemoPresetRow>
+
         <FormGroup>
           <label>페이지 URL</label>
           <Input
@@ -156,7 +192,7 @@ const GenerateTC = () => {
           />
         </FormGroup>
         <Flex $justify="flex-end">
-          <Button $variant="primary" onClick={handleNlTest} disabled={nlLoading} style={{ background: colors.info }}>
+          <Button $variant="primary" onClick={() => handleNlTest()} disabled={nlLoading} style={{ background: colors.info }}>
             <span className="material-icons" style={{ fontSize: 18 }}>{nlLoading ? "hourglass_top" : "play_circle"}</span>
             {nlLoading ? "생성 + 실행 중..." : "지금 실행"}
           </Button>
@@ -376,6 +412,43 @@ const ErrorBanner = styled.div`
 
 const ResultCard = styled(Card)`
   margin-top: 20px;
+`;
+
+const DemoPresetRow = styled.div`
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+  span:first-child {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: ${colors.textSecondary};
+    margin-right: 2px;
+  }
+`;
+
+const PresetChip = styled.button`
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 12px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: ${colors.info};
+  background: ${colors.infoLight};
+  border: 1px solid transparent;
+  border-radius: 999px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.15s;
+  &:hover:not(:disabled) {
+    border-color: ${colors.info};
+  }
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
 `;
 
 const NlResultBox = styled.div`
