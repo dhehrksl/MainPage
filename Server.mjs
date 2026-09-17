@@ -726,6 +726,72 @@ app.post("/generate-test", (req, res) => {
 // ─────────────────────────────────────
 // URL 하나를 열어서 페이지 구조(헤딩/버튼/링크/입력필드)를 뽑아온다.
 // URL→TC 생성과 자연어 즉석 테스트 둘 다 이 함수로 페이지를 "읽는다".
+// 지금 열려있는 page의 구조(헤딩/버튼/링크/입력필드)를 뽑아온다.
+// scrapePage(최초 1회 로드)와 자연어 즉석 테스트의 에이전트 루프(매 단계마다 재관찰)
+// 양쪽에서 다 쓰는, 살아있는 page 객체 하나를 대상으로 한 순수 관찰 함수다.
+//
+// 모바일/데스크톱 메뉴가 둘 다 DOM에 있는 등 같은 요소가 중복 렌더링되는
+// 사이트가 많아서, 캡(최대 개수)을 자르기 전에 먼저 중복을 제거한다.
+// 안 그러면 캡의 절반이 똑같은 항목 반복에 낭비되고, 정작 캡 밖에 있는
+// 다른 요소(로그인, 신청 버튼, 푸터 링크 등)는 아예 AI한테 전달조차 안 된다.
+const extractPageInfo = (page) =>
+  page.evaluate(() => {
+    const txt = (el) => (el?.textContent || "").replace(/\s+/g, " ").trim();
+    // 텍스트/aria-label/value가 전부 없는 아이콘 전용 버튼(예: SVG만 있는 버튼)은
+    // 클래스명이라도 힌트로 넘긴다. 클래스명에 의미 있는 이름(예: "header__partner-button")이
+    // 붙어있는 경우가 많아서, 이거라도 없으면 AI가 그 요소의 존재 자체를 모르게 된다.
+    const classHint = (el) => {
+      const cls = typeof el.className === "string" ? el.className : "";
+      return cls.split(/\s+/).find((c) => c.length > 3) || "";
+    };
+    const dedupe = (arr) => [...new Set(arr)];
+    const dedupeBy = (arr, keyFn) => {
+      const seen = new Set();
+      return arr.filter((item) => {
+        const key = keyFn(item);
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    };
+
+    return {
+      title: document.title,
+      metaDescription: document.querySelector('meta[name="description"]')?.content || "",
+      bodyTextSample: (document.body.innerText || "").replace(/\s+/g, " ").trim().slice(0, 800),
+      headings: dedupeBy(
+        Array.from(document.querySelectorAll("h1, h2, h3"))
+          .map((h) => ({ tag: h.tagName.toLowerCase(), text: txt(h) }))
+          .filter((h) => h.text),
+        (h) => h.tag + "|" + h.text
+      ).slice(0, 20),
+      buttons: dedupe(
+        Array.from(document.querySelectorAll("button, [role=button], input[type=button], input[type=submit]"))
+          .map((b) => txt(b) || b.getAttribute("aria-label") || b.getAttribute("title") || b.value || classHint(b))
+          .filter(Boolean)
+      ).slice(0, 30),
+      links: dedupe(
+        Array.from(document.querySelectorAll("a"))
+          .map((a) => txt(a) || a.getAttribute("aria-label") || a.getAttribute("title") || classHint(a))
+          .filter(Boolean)
+      ).slice(0, 50),
+      inputs: dedupeBy(
+        Array.from(document.querySelectorAll("input, textarea, select")).map((i) => {
+          const labelText = i.labels?.[0] ? txt(i.labels[0]) : "";
+          return {
+            type: (i.type || i.tagName).toLowerCase(),
+            name: i.name || "",
+            placeholder: i.placeholder || "",
+            label: labelText,
+            required: !!i.required,
+          };
+        }),
+        (i) => i.type + "|" + i.name + "|" + i.placeholder + "|" + i.label
+      ).slice(0, 30),
+      formCount: document.querySelectorAll("form").length,
+    };
+  });
+
 const scrapePage = async (url, useScreenshot) => {
   let browser;
   try {
@@ -742,67 +808,7 @@ const scrapePage = async (url, useScreenshot) => {
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
     await new Promise((resolve) => setTimeout(resolve, 2000));
 
-    // 페이지 구조 추출
-    // 모바일/데스크톱 메뉴가 둘 다 DOM에 있는 등 같은 요소가 중복 렌더링되는
-    // 사이트가 많아서, 캡(최대 개수)을 자르기 전에 먼저 중복을 제거한다.
-    // 안 그러면 캡의 절반이 똑같은 항목 반복에 낭비되고, 정작 캡 밖에 있는
-    // 다른 요소(로그인, 신청 버튼, 푸터 링크 등)는 아예 AI한테 전달조차 안 된다.
-    const pageInfo = await page.evaluate(() => {
-      const txt = (el) => (el?.textContent || "").replace(/\s+/g, " ").trim();
-      // 텍스트/aria-label/value가 전부 없는 아이콘 전용 버튼(예: SVG만 있는 버튼)은
-      // 클래스명이라도 힌트로 넘긴다. 클래스명에 의미 있는 이름(예: "header__partner-button")이
-      // 붙어있는 경우가 많아서, 이거라도 없으면 AI가 그 요소의 존재 자체를 모르게 된다.
-      const classHint = (el) => {
-        const cls = typeof el.className === "string" ? el.className : "";
-        return cls.split(/\s+/).find((c) => c.length > 3) || "";
-      };
-      const dedupe = (arr) => [...new Set(arr)];
-      const dedupeBy = (arr, keyFn) => {
-        const seen = new Set();
-        return arr.filter((item) => {
-          const key = keyFn(item);
-          if (seen.has(key)) return false;
-          seen.add(key);
-          return true;
-        });
-      };
-
-      return {
-        title: document.title,
-        metaDescription: document.querySelector('meta[name="description"]')?.content || "",
-        bodyTextSample: (document.body.innerText || "").replace(/\s+/g, " ").trim().slice(0, 800),
-        headings: dedupeBy(
-          Array.from(document.querySelectorAll("h1, h2, h3"))
-            .map((h) => ({ tag: h.tagName.toLowerCase(), text: txt(h) }))
-            .filter((h) => h.text),
-          (h) => h.tag + "|" + h.text
-        ).slice(0, 20),
-        buttons: dedupe(
-          Array.from(document.querySelectorAll("button, [role=button], input[type=button], input[type=submit]"))
-            .map((b) => txt(b) || b.getAttribute("aria-label") || b.getAttribute("title") || b.value || classHint(b))
-            .filter(Boolean)
-        ).slice(0, 30),
-        links: dedupe(
-          Array.from(document.querySelectorAll("a"))
-            .map((a) => txt(a) || a.getAttribute("aria-label") || a.getAttribute("title") || classHint(a))
-            .filter(Boolean)
-        ).slice(0, 30),
-        inputs: dedupeBy(
-          Array.from(document.querySelectorAll("input, textarea, select")).map((i) => {
-            const labelText = i.labels?.[0] ? txt(i.labels[0]) : "";
-            return {
-              type: (i.type || i.tagName).toLowerCase(),
-              name: i.name || "",
-              placeholder: i.placeholder || "",
-              label: labelText,
-              required: !!i.required,
-            };
-          }),
-          (i) => i.type + "|" + i.name + "|" + i.placeholder + "|" + i.label
-        ).slice(0, 30),
-        formCount: document.querySelectorAll("form").length,
-      };
-    });
+    const pageInfo = await extractPageInfo(page);
 
     // 스크린샷 (뷰포트만 — fullPage는 용량 큼)
     // useScreenshot=false면 촬영을 건너뛰어 토큰(비용)을 크게 절약한다.
@@ -819,6 +825,180 @@ const scrapePage = async (url, useScreenshot) => {
     browser = null;
     console.log(`페이지 수집 완료: title="${pageInfo.title}", buttons=${pageInfo.buttons.length}, inputs=${pageInfo.inputs.length}, screenshot=${useScreenshot ? "포함" : "생략"}`);
     return { pageInfo, screenshotBase64 };
+  } finally {
+    if (browser) {
+      try { await browser.close(); } catch {}
+    }
+  }
+};
+
+// ─────────────────────────────────────
+// 5-1-1) 자연어 즉석 테스트 — 여러 페이지를 넘나드는 에이전트 루프
+//
+// 예전 방식은 시작 페이지 하나만 보고 액션 전체를 한 번에 미리 써버렸다.
+// "게시판에서 OO 관련 글 찾아 클릭" 같은, 아직 안 가본 다음 페이지의
+// 실제 내용을 알아야 하는 지시는 그 방식으로는 원천적으로 못 푼다(AI가
+// 모르는 내용을 지어낼 수밖에 없음).
+//
+// 그래서 여기서는 "한 걸음 보고 → 한 걸음 결정 → 실행 → 다시 관찰"을
+// 반복한다. 매 단계 AI에게 지금 페이지에 실제로 있는 버튼/링크/본문을
+// 보여주고 "다음 한 걸음"만 고르게 하면, 다음 페이지 내용을 미리 알 필요가
+// 없어진다 — 그 페이지에 도착한 다음에 보고 고르니까.
+// ─────────────────────────────────────
+const AGENT_MAX_STEPS = 7;
+const AGENT_ACTION_TYPES = new Set(["click", "type", "assertText", "assertUrlChange", "finish"]);
+
+const describeAgentAction = (action) => {
+  if (action.type === "click") return `"${action.text}" 클릭`;
+  if (action.type === "type") return `"${action.targetHint || "입력필드"}"에 "${action.text}" 입력`;
+  if (action.type === "assertText") return `"${action.text}" 텍스트 존재 확인`;
+  if (action.type === "assertUrlChange") return "URL 변경 확인";
+  return action.type;
+};
+
+// 클릭/입력 후 다음 관찰까지 안정적으로 기다린다. 네비게이션이 실제로 일어나면
+// 최대 4초까지 기다려주고, 안 일어나면(같은 페이지 내 변화) 1.2초만 대기하고 넘어간다.
+const settleAfterAction = async (page) => {
+  await Promise.race([
+    page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 4000 }).catch(() => {}),
+    new Promise((r) => setTimeout(r, 1200)),
+  ]);
+  await new Promise((r) => setTimeout(r, 400));
+};
+
+const runAgenticNlTest = async (url, instruction) => {
+  const startedAt = Date.now();
+  const history = []; // { action, outcome }
+  const executedActions = []; // 저장/재실행용 — finish/실패한 시도는 제외한 성공한 액션만
+  let browser;
+  try {
+    browser = await puppeteer.launch({ headless: true, args: PUPPETEER_SAFE_ARGS });
+    const page = await browser.newPage();
+    await page.setViewport({ width: 1280, height: 900 });
+    await page.setUserAgent(
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    );
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
+    await new Promise((r) => setTimeout(r, 1500));
+
+    let verdict = null; // { success, message } — finish 액션이나 스텝 한도 초과로 채워짐
+
+    for (let step = 0; step < AGENT_MAX_STEPS; step++) {
+      const pageInfo = await extractPageInfo(page);
+      const beforeUrl = page.url();
+
+      const prompt = `너는 QA 엔지니어를 돕는 자동화 에이전트야. 사용자가 자연어로 설명한 목표를 달성하기 위해, 지금 보고 있는 화면 상태만 보고 "바로 다음에 할 행동 딱 하나"를 결정해.
+
+전체 목표: "${instruction}"
+시작 URL: ${url}
+지금은 ${step + 1}번째 단계 (최대 ${AGENT_MAX_STEPS}단계 안에 끝내야 함)
+
+지금까지 실행한 단계:
+${history.length ? history.map((h, i) => `${i + 1}. ${describeAgentAction(h.action)} → ${h.outcome}`).join("\n") : "(아직 없음)"}
+
+현재 화면 상태:
+- 현재 URL: ${beforeUrl}
+- 타이틀: ${pageInfo.title}
+- 헤딩: ${JSON.stringify(pageInfo.headings.map((h) => h.text))}
+- 버튼: ${JSON.stringify(pageInfo.buttons)}
+- 링크: ${JSON.stringify(pageInfo.links)}
+- 입력 필드: ${JSON.stringify(pageInfo.inputs)}
+- 본문 일부: ${pageInfo.bodyTextSample}
+
+규칙:
+- click/type의 text·targetHint는 위 목록에 실제로 있는 것만 쓸 것. 목록에 없는 걸 지어내지 말 것.
+- 목표를 이루려면 여러 화면을 거쳐야 할 수도 있다 — 지금은 그 중 "다음 한 걸음"만 고를 것.
+- 지금 화면의 링크/헤딩/본문 중에 목표와 실제로 관련된 항목(예: 특정 키워드가 포함된 게시글 제목)이 이미 보이면, 검색을 새로 시도하지 말고 그 항목을 바로 클릭할 것.
+- 목표를 이미 달성했다고 판단되면(원하는 화면/내용이 보임) type을 "finish", success를 true로. 더 진행할 방법이 없거나 목표 달성에 실패했다고 판단되면 type을 "finish", success를 false로.
+- message는 이 행동을 고른 이유(진행 중일 때) 또는 최종 결과 설명(finish일 때)을 한국어 1~2문장으로.
+
+다음 JSON 형식으로만 응답해. 다른 설명이나 마크다운 없이 순수 JSON만:
+{ "action": { "type": "click|type|assertText|assertUrlChange|finish", "text": "...", "targetHint": "...", "success": true, "message": "..." } }`;
+
+      const { response } = await generateContentWithFallback(prompt);
+      const rawText = response.text();
+
+      let parsed;
+      try {
+        const cleaned = rawText.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
+        parsed = JSON.parse(cleaned);
+      } catch {
+        const match = rawText.match(/\{[\s\S]*\}/);
+        if (match) parsed = JSON.parse(match[0]);
+        else throw new Error("AI 응답을 JSON으로 파싱할 수 없습니다.");
+      }
+
+      const raw = parsed.action || {};
+      if (!AGENT_ACTION_TYPES.has(raw.type)) {
+        history.push({ action: { type: "unknown" }, outcome: "AI가 알 수 없는 action.type을 응답함 — 건너뜀" });
+        continue;
+      }
+
+      if (raw.type === "finish") {
+        verdict = { success: !!raw.success, message: String(raw.message || "").trim() || "완료" };
+        break;
+      }
+
+      const action =
+        raw.type === "click" ? { type: "click", text: String(raw.text || "").trim() } :
+        raw.type === "type" ? { type: "type", targetHint: String(raw.targetHint || "").trim(), text: String(raw.text || "").trim() } :
+        raw.type === "assertText" ? { type: "assertText", text: String(raw.text || "").trim() } :
+        { type: "assertUrlChange", beforeUrl };
+
+      console.log(`   [${step + 1}/${AGENT_MAX_STEPS}] ${describeAgentAction(action)}${raw.message ? " — " + raw.message : ""}`);
+
+      try {
+        await performAction(page, action, step);
+        if (action.type === "click" || action.type === "assertUrlChange") {
+          await settleAfterAction(page);
+        }
+        history.push({ action, outcome: "성공" });
+        executedActions.push(action);
+      } catch (err) {
+        // 한 걸음 실패했다고 바로 포기하지 않는다 — 실패 사실을 AI에게 알려주고
+        // 다음 단계에서 다른 방법을 고르게 한다 (버튼 텍스트를 잘못 짚었을 수도 있으니).
+        history.push({ action, outcome: `실패 — ${err.message}` });
+      }
+    }
+
+    if (!verdict) {
+      verdict = { success: false, message: `${AGENT_MAX_STEPS}단계 안에 목표를 달성하지 못했습니다.` };
+    }
+
+    let screenshot = null;
+    try {
+      screenshot = await page.screenshot({ type: "png", encoding: "base64" });
+    } catch {
+      // 스크린샷 실패는 무시
+    }
+
+    await browser.close();
+    browser = null;
+
+    return {
+      status: verdict.success ? "Pass" : "Fail",
+      message: verdict.message,
+      screenshot,
+      actions: executedActions,
+      stepLog: history.map((h) => `${describeAgentAction(h.action)} → ${h.outcome}`),
+      durationMs: Date.now() - startedAt,
+    };
+  } catch (err) {
+    let screenshot = null;
+    try {
+      if (browser) {
+        const pages = await browser.pages();
+        screenshot = await pages[pages.length - 1].screenshot({ type: "png", encoding: "base64" });
+      }
+    } catch {}
+    return {
+      status: "Error",
+      message: err.message,
+      screenshot,
+      actions: executedActions,
+      stepLog: history.map((h) => `${describeAgentAction(h.action)} → ${h.outcome}`),
+      durationMs: Date.now() - startedAt,
+    };
   } finally {
     if (browser) {
       try { await browser.close(); } catch {}
@@ -1051,79 +1231,30 @@ app.post("/api/nl-test", async (req, res) => {
     return res.status(400).json({ error: "어떤 걸 테스트할지 자연어로 입력해주세요." });
   }
 
-  console.log("\n========== 자연어 즉석 테스트 ==========");
+  console.log("\n========== 자연어 즉석 테스트 (에이전트 모드) ==========");
   console.log("URL:", url, "| 지시:", instruction);
 
   try {
-    const { pageInfo } = await scrapePage(url, false);
-
-    const prompt = `너는 QA 엔지니어를 돕는 어시스턴트야. 사용자가 자연어로 설명한 테스트 시나리오를, 실제 페이지 요소에 근거해서 실행 가능한 테스트 케이스로 바꿔줘.
-
-URL: ${url}
-페이지 타이틀: ${pageInfo.title}
-버튼: ${JSON.stringify(pageInfo.buttons)}
-링크: ${JSON.stringify(pageInfo.links)}
-입력 필드: ${JSON.stringify(pageInfo.inputs)}
-
-사용자가 원하는 테스트: "${instruction}"
-
-요구사항:
-- click/type에 쓰는 text는 위 버튼/링크/입력필드 목록에 실제로 있는 것만 사용할 것 — 지시에 언급된 표현과 가장 비슷한 실제 항목을 골라 쓸 것.
-- actions는 반드시 이 4종류만 사용: {"type":"click","text":"..."} / {"type":"type","targetHint":"...","text":"..."} / {"type":"assertText","text":"..."} / {"type":"assertUrlChange"}
-- 마지막 액션은 반드시 검증(assertText 또는 assertUrlChange)이어야 한다. 사용자 지시에 결과 언급이 없다면 상식적으로 관찰 가능한 결과를 스스로 판단해서 검증 조건을 만들 것.
-- description은 "1. ... 2. ..." 형태, expectedResult는 한국어 한 문장.
-
-다음 JSON 형식으로만 응답해줘. 다른 설명이나 마크다운 코드블록 없이 순수 JSON만:
-{
-  "title": "TC 제목",
-  "description": "1. ... \\n2. ...",
-  "expectedResult": "기대 결과",
-  "actions": [ { "type": "click", "text": "..." } ]
-}`;
-
-    const { response, modelUsed } = await generateContentWithFallback(prompt);
-    const rawText = response.text();
-    console.log(`Gemini 응답 (모델: ${modelUsed}):`, rawText);
-
-    let parsed;
-    try {
-      const cleaned = rawText.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
-      parsed = JSON.parse(cleaned);
-    } catch {
-      const match = rawText.match(/\{[\s\S]*\}/);
-      if (match) parsed = JSON.parse(match[0]);
-      else throw new Error("AI 응답을 JSON으로 파싱할 수 없습니다.");
-    }
-
-    const ACTION_TYPES = new Set(["click", "type", "assertText", "assertUrlChange"]);
-    const actions = (Array.isArray(parsed.actions) ? parsed.actions : [])
-      .filter((a) => a && ACTION_TYPES.has(a.type))
-      .map((a) => {
-        if (a.type === "click") return { type: "click", text: String(a.text || "").trim() };
-        if (a.type === "type") return { type: "type", targetHint: String(a.targetHint || "").trim(), text: String(a.text || "").trim() };
-        if (a.type === "assertText") return { type: "assertText", text: String(a.text || "").trim() };
-        return { type: "assertUrlChange" };
-      })
-      .filter((a) => a.type === "assertUrlChange" || a.text);
-
-    if (actions.length === 0) {
-      return res.status(422).json({ error: "AI가 실행 가능한 액션을 만들지 못했습니다. 지시를 좀 더 구체적으로 적어보세요." });
-    }
+    const result = await runAgenticNlTest(url, instruction.trim());
+    console.log(`→ ${result.status} (${result.durationMs}ms, ${result.stepLog.length}단계 시도) — ${result.message}`);
 
     const tcLike = {
-      title: String(parsed.title || instruction).trim(),
-      description: String(parsed.description || "").trim(),
-      expectedResult: String(parsed.expectedResult || "").trim(),
+      title: instruction.trim().slice(0, 80),
+      description: result.stepLog.length
+        ? result.stepLog.map((s, i) => `${i + 1}. ${s}`).join("\n")
+        : "(실행된 단계가 없습니다)",
+      expectedResult: result.message,
       priority: "Medium",
       category: "자연어 테스트",
       sourceUrl: url,
-      actions,
+      actions: result.actions,
     };
 
-    console.log(`즉석 실행: ${tcLike.title} (액션 ${actions.length}개)`);
-    const result = await runTestcase(tcLike);
-    const diagnosis = result.status === "Fail" ? await diagnoseFailure(tcLike, result) : "";
-    console.log(`→ ${result.status}${diagnosis ? " | AI 진단: " + diagnosis : ""}`);
+    const diagnosis =
+      result.status === "Fail" || result.status === "Error"
+        ? await diagnoseFailure(tcLike, result)
+        : "";
+    if (diagnosis) console.log(`   AI 진단: ${diagnosis}`);
 
     res.json({
       ...tcLike,
