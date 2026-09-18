@@ -245,9 +245,23 @@ const PUPPETEER_SAFE_ARGS = [
   "--single-process",
 ];
 
-// 화면에 보이는 클릭 가능 요소 중 text를 포함하는 걸 찾아 elementHandle을 돌려준다.
+// 화면에 실제로 "보이고 클릭 가능한" 요소 중 text를 포함하는 걸 찾아 elementHandle을 돌려준다.
+// 모달/오버레이에 가려졌거나 화면 밖으로 밀려난 요소는 DOM에는 남아있어도 실제로
+// 클릭할 수 없으므로 후보에서 제외한다 — 그래야 AI가 이미 가려져서 실패한 대상을
+// 계속 재시도하며 스텝을 낭비하지 않는다.
 const findClickableByText = async (page, text) => {
   const handle = await page.evaluateHandle((searchText) => {
+    const isVisible = (el) => {
+      const rect = el.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return false;
+      if (rect.bottom < 0 || rect.top > window.innerHeight || rect.right < 0 || rect.left > window.innerWidth) return false;
+      const style = window.getComputedStyle(el);
+      if (style.visibility === "hidden" || style.display === "none" || Number(style.opacity) === 0) return false;
+      const cx = Math.min(Math.max(rect.left + rect.width / 2, 0), window.innerWidth - 1);
+      const cy = Math.min(Math.max(rect.top + rect.height / 2, 0), window.innerHeight - 1);
+      const topEl = document.elementFromPoint(cx, cy);
+      return !!topEl && (topEl === el || el.contains(topEl) || topEl.contains(el));
+    };
     const candidates = Array.from(
       document.querySelectorAll("button, a, [role=button], input[type=button], input[type=submit]")
     );
@@ -260,6 +274,7 @@ const findClickableByText = async (page, text) => {
       return cls.split(/\s+/).find((c) => c.length > 3) || "";
     };
     return candidates.find((el) => {
+      if (!isVisible(el)) return false;
       const label =
         norm(el.textContent) || norm(el.getAttribute("aria-label")) || norm(el.value) || classHint(el);
       return label.includes(searchText);
@@ -274,10 +289,22 @@ const findClickableByText = async (page, text) => {
 };
 
 // 입력 필드를 placeholder/label/현재 포커스 여부로 찾아 elementHandle을 돌려준다.
+// 후보를 보이는 것만으로 좁혀서, 가려진 입력창 대신 실제로 지금 열려있는 입력창을 잡는다.
 const findInputByHint = async (page, hint) => {
   const handle = await page.evaluateHandle((searchHint) => {
+    const isVisible = (el) => {
+      const rect = el.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return false;
+      if (rect.bottom < 0 || rect.top > window.innerHeight || rect.right < 0 || rect.left > window.innerWidth) return false;
+      const style = window.getComputedStyle(el);
+      if (style.visibility === "hidden" || style.display === "none" || Number(style.opacity) === 0) return false;
+      const cx = Math.min(Math.max(rect.left + rect.width / 2, 0), window.innerWidth - 1);
+      const cy = Math.min(Math.max(rect.top + rect.height / 2, 0), window.innerHeight - 1);
+      const topEl = document.elementFromPoint(cx, cy);
+      return !!topEl && (topEl === el || el.contains(topEl) || topEl.contains(el));
+    };
     const norm = (s) => (s || "").replace(/\s+/g, " ").trim();
-    const inputs = Array.from(document.querySelectorAll("input, textarea"));
+    const inputs = Array.from(document.querySelectorAll("input, textarea")).filter(isVisible);
     if (!searchHint) return inputs[0] || null;
     return (
       inputs.find((el) => {
@@ -748,6 +775,21 @@ const extractPageInfo = (page) =>
       const cls = typeof el.className === "string" ? el.className : "";
       return cls.split(/\s+/).find((c) => c.length > 3) || "";
     };
+    // 모달/오버레이에 가려졌거나 화면 밖으로 밀려난 요소는 DOM에는 남아있어도
+    // 실제로 클릭/입력할 수 없다. 이런 요소를 AI에게 "보이는 것"처럼 보고하면,
+    // AI가 존재하지도 않는 접근법(가려진 요소 클릭)을 매 단계 반복 시도하다
+    // 실행 예산(스텝 수)만 낭비하게 된다 — 그래서 여기서 미리 걸러낸다.
+    const isVisible = (el) => {
+      const rect = el.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return false;
+      if (rect.bottom < 0 || rect.top > window.innerHeight || rect.right < 0 || rect.left > window.innerWidth) return false;
+      const style = window.getComputedStyle(el);
+      if (style.visibility === "hidden" || style.display === "none" || Number(style.opacity) === 0) return false;
+      const cx = Math.min(Math.max(rect.left + rect.width / 2, 0), window.innerWidth - 1);
+      const cy = Math.min(Math.max(rect.top + rect.height / 2, 0), window.innerHeight - 1);
+      const topEl = document.elementFromPoint(cx, cy);
+      return !!topEl && (topEl === el || el.contains(topEl) || topEl.contains(el));
+    };
     const dedupe = (arr) => [...new Set(arr)];
     const dedupeBy = (arr, keyFn) => {
       const seen = new Set();
@@ -771,6 +813,7 @@ const extractPageInfo = (page) =>
       ).slice(0, 20),
       buttons: dedupe(
         Array.from(document.querySelectorAll("button, [role=button], input[type=button], input[type=submit]"))
+          .filter(isVisible)
           .map((b) => txt(b) || b.getAttribute("aria-label") || b.getAttribute("title") || b.value || classHint(b))
           .filter(Boolean)
       ).slice(0, 30),
@@ -783,6 +826,7 @@ const extractPageInfo = (page) =>
         // 먼저 채우고 남는 자리에 메뉴 링크를 채운다.
         const all = dedupe(
           Array.from(document.querySelectorAll("a"))
+            .filter(isVisible)
             .map((a) => txt(a) || a.getAttribute("aria-label") || a.getAttribute("title") || classHint(a))
             .filter(Boolean)
         );
@@ -792,7 +836,7 @@ const extractPageInfo = (page) =>
         return [...content, ...chrome].slice(0, 60);
       })(),
       inputs: dedupeBy(
-        Array.from(document.querySelectorAll("input, textarea, select")).map((i) => {
+        Array.from(document.querySelectorAll("input, textarea, select")).filter(isVisible).map((i) => {
           const labelText = i.labels?.[0] ? txt(i.labels[0]) : "";
           return {
             type: (i.type || i.tagName).toLowerCase(),
