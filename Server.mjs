@@ -326,10 +326,23 @@ const performAction = async (page, action, index) => {
   const label = `${index + 1}번째 단계(${action.type})`;
   try {
     if (action.type === "click") {
-      const el = await findClickableByText(page, action.text);
+      let el = await findClickableByText(page, action.text);
       if (!el) throw new Error(`"${action.text}" 텍스트를 가진 클릭 요소를 찾지 못함`);
-      await el.click();
-      await el.dispose();
+      try {
+        await el.click();
+      } catch (clickErr) {
+        // React/SPA 재렌더링으로 DOM 노드가 교체됐을 때 재탐색 후 1회 재시도
+        if (/detached|Execution context/i.test(clickErr.message)) {
+          await el.dispose().catch(() => {});
+          await new Promise((r) => setTimeout(r, 600));
+          el = await findClickableByText(page, action.text);
+          if (!el) throw new Error(`"${action.text}" 클릭 재시도 실패 — 요소가 DOM에서 사라졌습니다`);
+          await el.click();
+        } else {
+          throw clickErr;
+        }
+      }
+      await el.dispose().catch(() => {});
     } else if (action.type === "type") {
       const el = await findInputByHint(page, action.targetHint || "");
       if (!el) throw new Error("입력할 필드를 찾지 못함");
@@ -969,6 +982,8 @@ ${history.length ? history.map((h, i) => `${i + 1}. ${describeAgentAction(h.acti
 - click/type의 text·targetHint는 위 목록에 실제로 있는 것만 쓸 것. 목록에 없는 걸 지어내지 말 것.
 - 목표를 이루려면 여러 화면을 거쳐야 할 수도 있다 — 지금은 그 중 "다음 한 걸음"만 고를 것.
 - 지금 화면의 링크/헤딩/본문 중에 목표와 실제로 관련된 항목(예: 특정 키워드가 포함된 게시글 제목)이 이미 보이면, 검색을 새로 시도하지 말고 그 항목을 바로 클릭할 것.
+- 이전 단계에서 이미 "성공"으로 기록된 클릭 항목이 현재 화면에 다시 보여도 절대 다시 클릭하지 말 것. 그건 이미 그 페이지로 이동했거나 그 동작을 수행한 뒤 남은 흔적(breadcrumb, 헤딩 등)이다 — 다음 단계를 찾을 것.
+- 같은 text로 click을 2회 연속 실패했다면 그 접근을 포기하고 다른 방법(다른 버튼/링크)을 시도할 것. 방법이 없으면 finish(success=false)로 끝낼 것.
 - 목표를 이미 달성했다고 판단되면(원하는 화면/내용이 보임) type을 "finish", success를 true로. 더 진행할 방법이 없거나 목표 달성에 실패했다고 판단되면 type을 "finish", success를 false로.
 - message는 이 행동을 고른 이유(진행 중일 때) 또는 최종 결과 설명(finish일 때)을 한국어 1~2문장으로.
 
