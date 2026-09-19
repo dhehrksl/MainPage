@@ -817,7 +817,7 @@ const extractPageInfo = (page) =>
     return {
       title: document.title,
       metaDescription: document.querySelector('meta[name="description"]')?.content || "",
-      bodyTextSample: (document.body.innerText || "").replace(/\s+/g, " ").trim().slice(0, 800),
+      bodyTextSample: (document.body.innerText || "").replace(/\s+/g, " ").trim().slice(0, 1500),
       headings: dedupeBy(
         Array.from(document.querySelectorAll("h1, h2, h3"))
           .map((h) => ({ tag: h.tagName.toLowerCase(), text: txt(h) }))
@@ -846,7 +846,7 @@ const extractPageInfo = (page) =>
         const looksLikeContent = (label) => label.length >= 8 && label.includes(" ");
         const content = all.filter(looksLikeContent);
         const chrome = all.filter((label) => !looksLikeContent(label));
-        return [...content, ...chrome].slice(0, 60);
+        return [...content, ...chrome].slice(0, 90);
       })(),
       inputs: dedupeBy(
         Array.from(document.querySelectorAll("input, textarea, select")).filter(isVisible).map((i) => {
@@ -1128,7 +1128,8 @@ URL: ${url}
 - 서로 다른 링크·버튼 여러 개를 한 TC의 description에 나열하는 것 (예: "1. A 클릭 2. B 클릭 ... 10. J 클릭"). 하나의 TC는 하나의 독립된 시나리오만 검증해야 하며, 검증하고 싶은 요소가 여러 개면 TC를 그 개수만큼 나눠서 각각 만들 것.
 - "가독성이 좋다", "이해하기 쉽다", "효과적으로 전달한다"처럼 사람마다 판단이 갈리는 주관적 항목. TC는 반드시 명확하게 참/거짓으로 판별 가능한 조건만 다룰 것.
 - 텍스트/제목/메타데이터가 "페이지에 표시되는지 확인한다" 유형의 단순 존재 확인 TC는 전체 응답에서 최대 2개까지만 포함할 것 (3개째부터는 만들지 말 것). 버튼·입력·폼·링크 클릭처럼 실제 상호작용을 검증하는 TC를 항상 우선할 것.
-- 위 기준들 때문에 만들 수 있는 TC가 ${numTCs}개보다 적어지는 건 정상이다. 페이지에 상호작용 요소가 별로 없다면 5개, 3개만 반환해도 되고, 그게 개수를 억지로 채운 것보다 훨씬 낫다. 개수보다 품질이 항상 우선이다.
+- 이벤트 목록·게시판·기사 목록처럼 같은 유형의 클릭 가능한 항목이 여러 개 있는 페이지에서는, 각 항목을 개별 TC로 만들어 요청 개수(${numTCs}개)에 최대한 맞출 것. 항목이 충분히 있다면 가능한 한 ${numTCs}개를 채워라.
+- 위 기준들 때문에 만들 수 있는 TC가 ${numTCs}개보다 적어지는 건, 페이지에 실제로 상호작용 요소가 부족할 때만 정상이다. 항목(링크·버튼)이 충분한데 개수를 줄이는 건 잘못된 판단이다.
 
 각 TC마다 description을 실제 브라우저에서 자동으로 재현할 수 있는 "actions" 배열도 함께 만들어줘. actions의 각 항목은 아래 4종류 중 하나여야 해:
 - {"type":"click","text":"버튼/링크에 실제로 표시된 텍스트 그대로"} — 그 텍스트를 포함하는 클릭 가능 요소를 클릭
