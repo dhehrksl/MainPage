@@ -1081,6 +1081,10 @@ ${history.length ? history.map((h, i) => `${i + 1}. ${describeAgentAction(h.acti
   }
 };
 
+// TC 생성은 Puppeteer 인스턴스를 띄우므로 동시 실행 1개로 제한한다.
+// 서버 RAM(1 GB)에서 Puppeteer 2개 동시 실행은 메모리 부족 → 타임아웃으로 이어진다.
+let tcGenerationBusy = false;
+
 app.post("/api/tc-from-url", async (req, res) => {
   const { url, numTCs = 10, useScreenshot = false } = req.body;
 
@@ -1090,6 +1094,10 @@ app.post("/api/tc-from-url", async (req, res) => {
   if (!/^https?:\/\//i.test(url)) {
     return res.status(400).json({ error: "http:// 또는 https:// 로 시작하는 URL만 지원합니다." });
   }
+  if (tcGenerationBusy) {
+    return res.status(503).json({ error: "TC 생성이 이미 진행 중입니다. 완료 후 다시 시도해주세요." });
+  }
+  tcGenerationBusy = true;
 
   console.log("\n========== URL→TC 생성 요청 ==========");
   console.log("URL:", url);
@@ -1124,7 +1132,7 @@ URL: ${url}
 
 절대 하지 말아야 할 것 (아래 중 하나라도 해당하면 그 TC는 만들지 말고 통째로 제외할 것):
 - 페이지에 실제로 존재하는지 확신할 수 없는 요소에 대한 TC. 제목이나 설명에 "(추정)", "(만약 존재한다면)", "~일 것으로 예상" 같은 불확실성을 나타내는 표현이 들어간다면, 그건 근거가 부족하다는 신호이니 TC 자체를 빼라.
-- expectedResult에 두 가지 이상의 가능성을 나열하는 것. "~하거나 ~한다" 형태뿐 아니라 "...한다 (또는 ~)"처럼 괄호로 대안을 슬쩍 끼워 넣는 것도 전부 금지. 확신이 없어서 대안을 적고 싶어진다면, 그건 그 TC를 만들면 안 된다는 신호다 — 대안을 적지 말고 TC 자체를 빼라.
+- expectedResult에 두 가지 이상의 가능성을 나열하는 것. "~하거나 ~한다" 형태뿐 아니라 "...한다 (또는 ~)"처럼 괄호로 대안을 슬쩍 끼워 넣는 것도 전부 금지. 확신이 없어서 대안을 적고 싶어진다면, 이벤트·게시글 링크 클릭처럼 "페이지 이동"이 목적인 경우엔 expectedResult를 "다른 페이지로 이동한다"로만 쓰고 actions 마지막에 {"type":"assertUrlChange"}를 사용할 것. 그 외에 대안이 필요하다면 TC 자체를 빼라.
 - 서로 다른 링크·버튼 여러 개를 한 TC의 description에 나열하는 것 (예: "1. A 클릭 2. B 클릭 ... 10. J 클릭"). 하나의 TC는 하나의 독립된 시나리오만 검증해야 하며, 검증하고 싶은 요소가 여러 개면 TC를 그 개수만큼 나눠서 각각 만들 것.
 - "가독성이 좋다", "이해하기 쉽다", "효과적으로 전달한다"처럼 사람마다 판단이 갈리는 주관적 항목. TC는 반드시 명확하게 참/거짓으로 판별 가능한 조건만 다룰 것.
 - 텍스트/제목/메타데이터가 "페이지에 표시되는지 확인한다" 유형의 단순 존재 확인 TC는 전체 응답에서 최대 2개까지만 포함할 것 (3개째부터는 만들지 말 것). 버튼·입력·폼·링크 클릭처럼 실제 상호작용을 검증하는 TC를 항상 우선할 것.
@@ -1289,6 +1297,8 @@ actions는 description의 단계 순서와 정확히 대응해야 하고, 마지
     }
 
     res.status(statusCode).json({ error: userMessage });
+  } finally {
+    tcGenerationBusy = false;
   }
 });
 
