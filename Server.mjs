@@ -355,6 +355,11 @@ const performAction = async (page, action, index) => {
         throw new Error(`"${action.text}" 텍스트가 화면에 없음`);
       }
     } else if (action.type === "assertUrlChange") {
+      // 클릭 직후 페이지 이동이 아직 진행 중일 수 있으므로 최대 8초간 폴링
+      const deadline = Date.now() + 8000;
+      while (page.url() === action.beforeUrl && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 300));
+      }
       if (page.url() === action.beforeUrl) {
         throw new Error("URL이 이전과 동일함 (페이지 이동 안 됨)");
       }
@@ -383,7 +388,7 @@ const runTestcase = async (tc) => {
     await page.setUserAgent(
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     );
-    await page.goto(tc.sourceUrl, { waitUntil: "domcontentloaded", timeout: 45000 });
+    await page.goto(tc.sourceUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
     await new Promise((r) => setTimeout(r, 2000));
 
     // assertUrlChange는 "테스트 시작 시점"과 비교해야 한다 — 바로 앞 단계(클릭 등)에서
