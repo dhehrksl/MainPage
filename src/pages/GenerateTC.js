@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import styled from "styled-components";
 import {
@@ -31,6 +31,32 @@ const GenerateTC = () => {
   const [error, setError] = useState("");
   const [result, setResult] = useState(null); // { url, pageTitle, testcases, meta }
   const [selectedIdx, setSelectedIdx] = useState(new Set());
+
+  // 경과 시간 카운터
+  const [elapsed, setElapsed] = useState(0);
+  const [nlElapsed, setNlElapsed] = useState(0);
+  const elapsedRef = useRef(null);
+  const nlElapsedRef = useRef(null);
+
+  useEffect(() => {
+    if (loading) {
+      setElapsed(0);
+      elapsedRef.current = setInterval(() => setElapsed((s) => s + 1), 1000);
+    } else {
+      clearInterval(elapsedRef.current);
+    }
+    return () => clearInterval(elapsedRef.current);
+  }, [loading]);
+
+  useEffect(() => {
+    if (nlLoading) {
+      setNlElapsed(0);
+      nlElapsedRef.current = setInterval(() => setNlElapsed((s) => s + 1), 1000);
+    } else {
+      clearInterval(nlElapsedRef.current);
+    }
+    return () => clearInterval(nlElapsedRef.current);
+  }, [nlLoading]);
 
   // 자연어 즉석 테스트
   const [nlUrl, setNlUrl] = useState("");
@@ -209,8 +235,9 @@ const GenerateTC = () => {
           <div style={{ textAlign: "center", padding: "20px 0" }}>
             <Spinner />
             <p style={{ color: colors.textSecondary, fontSize: "0.85rem", marginTop: 8 }}>
-              페이지 분석 → 테스트 생성 → 실제 실행 중 (약 15~30초)
+              페이지 분석 → 테스트 생성 → 실제 실행 중 (보통 1~3분 소요)
             </p>
+            <ElapsedBadge>{nlElapsed}초 경과</ElapsedBadge>
           </div>
         )}
 
@@ -297,9 +324,10 @@ const GenerateTC = () => {
           <Spinner />
           <p style={{ color: colors.textSecondary, fontSize: "0.9rem" }}>
             {useScreenshot
-              ? "페이지 로딩 → 스크린샷 → AI 분석 중 (약 10~30초)"
-              : "페이지 로딩 → 구조 분석 → AI 분석 중 (약 10~20초)"}
+              ? "페이지 로딩 → 스크린샷 → AI 분석 중 (보통 1~2분 소요)"
+              : "페이지 로딩 → 구조 분석 → AI 분석 중 (보통 40~90초 소요)"}
           </p>
+          <ElapsedBadge>{elapsed}초 경과</ElapsedBadge>
         </div>
       )}
 
@@ -538,6 +566,17 @@ const TcDesc = styled.p`
   color: ${colors.textSecondary};
   line-height: 1.4;
   white-space: pre-line;
+`;
+
+const ElapsedBadge = styled.div`
+  display: inline-block;
+  margin-top: 6px;
+  padding: 3px 12px;
+  background: ${colors.border};
+  color: ${colors.textSecondary};
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
 `;
 
 const SmallBtn = styled.button`
