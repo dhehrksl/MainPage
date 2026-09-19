@@ -1,29 +1,28 @@
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import styled from "styled-components";
 import {
   PageWrapper, PageHeader, PageTitle, PageSubtitle,
   Card, Grid, Flex, Badge, colors,
 } from "../styles/theme";
+import { fetchTestcases, fetchBugs } from "../api/client";
 
 const STATS = [
-  { icon: "checklist", label: "총 TC", key: "qa_testcases", color: colors.primary, bg: colors.primaryLight },
-  { icon: "check_circle", label: "Pass", key: "qa_testcases", color: colors.success, bg: colors.successLight, filter: "Pass" },
-  { icon: "bug_report", label: "활성 버그", key: "qa_bugs", color: colors.danger, bg: colors.dangerLight, filter: "active" },
-  { icon: "trending_up", label: "통과율", key: "rate", color: colors.info, bg: colors.infoLight },
+  { icon: "checklist", label: "총 TC", color: colors.primary, bg: colors.primaryLight },
+  { icon: "check_circle", label: "Pass", color: colors.success, bg: colors.successLight },
+  { icon: "bug_report", label: "활성 버그", color: colors.danger, bg: colors.dangerLight },
+  { icon: "trending_up", label: "통과율", color: colors.info, bg: colors.infoLight },
 ];
-
-const getStorageData = (key) => {
-  try {
-    return JSON.parse(localStorage.getItem(key) || "[]");
-  } catch {
-    return [];
-  }
-};
 
 const Home = () => {
   const navigate = useNavigate();
-  const testcases = getStorageData("qa_testcases");
-  const bugs = getStorageData("qa_bugs");
+  const [testcases, setTestcases] = useState([]);
+  const [bugs, setBugs] = useState([]);
+
+  useEffect(() => {
+    fetchTestcases().then(({ data }) => setTestcases(data));
+    fetchBugs().then(({ data }) => setBugs(data));
+  }, []);
 
   const totalTC = testcases.length;
   const passCount = testcases.filter((t) => t.status === "Pass").length;
