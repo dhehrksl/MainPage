@@ -1389,7 +1389,7 @@ app.get("/api/testcases", requireDb, async (req, res) => {
   // 생성 시각이 아니라 TC 번호 순으로 정렬 — 수정/재생성으로 createdAt이 뒤섞여도
   // 항상 TC-0001, 0002... 순서로 보이게 한다.
   const list = await Testcase.find().sort({ tcId: 1 }).lean();
-  res.json(list.map(({ _id, __v, tcId, ...rest }) => ({ id: tcId, ...rest })));
+  res.json(list.map(({ _id, __v, tcId, ...rest }) => ({ tcId, ...rest })));
 });
 
 app.post("/api/testcases", requireDb, async (req, res) => {
@@ -1397,7 +1397,7 @@ app.post("/api/testcases", requireDb, async (req, res) => {
     const tcId = await nextTcId();
     const doc = await Testcase.create({ tcId, ...req.body });
     const { _id, __v, tcId: tid, ...rest } = doc.toObject();
-    res.status(201).json({ id: tid, ...rest });
+    res.status(201).json({ tcId: tid, ...rest });
   } catch (e) {
     res.status(400).json({ error: e.message });
   }
@@ -1412,7 +1412,7 @@ app.put("/api/testcases/:id", requireDb, async (req, res) => {
     ).lean();
     if (!updated) return res.status(404).json({ error: "not found" });
     const { _id, __v, tcId, ...rest } = updated;
-    res.json({ id: tcId, ...rest });
+    res.json({ tcId, ...rest });
   } catch (e) {
     res.status(400).json({ error: e.message });
   }
@@ -1432,7 +1432,7 @@ app.post("/api/testcases/bulk", requireDb, async (req, res) => {
     const tcId = await nextTcId();
     const doc = await Testcase.create({ tcId, ...r });
     const { _id, __v, tcId: tid, ...rest } = doc.toObject();
-    out.push({ id: tid, ...rest });
+    out.push({ tcId: tid, ...rest });
   }
   res.status(201).json(out);
 });
@@ -1469,7 +1469,7 @@ app.post("/api/testcases/:id/run", requireDb, async (req, res) => {
   });
 
   res.json({
-    id: req.params.id,
+    tcId: req.params.id,
     status: result.status,
     message: result.message,
     screenshot: result.screenshot,
@@ -1510,7 +1510,7 @@ app.post("/api/testcases/run-batch", requireDb, async (req, res) => {
       durationMs: result.durationMs,
     });
 
-    results.push({ id: tc.tcId, title: tc.title, status: result.status, message: result.message, aiDiagnosis: diagnosis, durationMs: result.durationMs });
+    results.push({ tcId: tc.tcId, title: tc.title, status: result.status, message: result.message, aiDiagnosis: diagnosis, durationMs: result.durationMs });
   }
 
   const summary = {
@@ -1554,7 +1554,7 @@ app.post("/api/test-runs/:id/bug-report", requireDb, async (req, res) => {
     });
     const { _id, __v, bugId: bid, ...rest } = doc.toObject();
     console.log(`→ ${bid} 등록됨: ${draft.title}`);
-    res.status(201).json({ id: bid, ...rest });
+    res.status(201).json({ bugId: bid, ...rest });
   } catch (err) {
     console.error("버그 리포트 생성 실패:", err.message);
     if (/429|quota/i.test(err.message || "")) {
@@ -1569,7 +1569,7 @@ app.post("/api/test-runs/:id/bug-report", requireDb, async (req, res) => {
 // ─────────────────────────────────────
 app.get("/api/bugs", requireDb, async (req, res) => {
   const list = await Bug.find().sort({ createdAt: 1 }).lean();
-  res.json(list.map(({ _id, __v, bugId, ...rest }) => ({ id: bugId, ...rest })));
+  res.json(list.map(({ _id, __v, bugId, ...rest }) => ({ bugId, ...rest })));
 });
 
 app.post("/api/bugs", requireDb, async (req, res) => {
@@ -1577,7 +1577,7 @@ app.post("/api/bugs", requireDb, async (req, res) => {
     const bugId = await nextBugId();
     const doc = await Bug.create({ bugId, ...req.body });
     const { _id, __v, bugId: bid, ...rest } = doc.toObject();
-    res.status(201).json({ id: bid, ...rest });
+    res.status(201).json({ bugId: bid, ...rest });
   } catch (e) {
     res.status(400).json({ error: e.message });
   }
@@ -1648,7 +1648,7 @@ app.put("/api/bugs/:id", requireDb, async (req, res) => {
     }
 
     const { _id, __v, bugId, ...rest } = updated;
-    res.json({ id: bugId, ...rest });
+    res.json({ bugId, ...rest });
   } catch (e) {
     res.status(400).json({ error: e.message });
   }
@@ -1665,14 +1665,14 @@ app.delete("/api/bugs/:id", requireDb, async (req, res) => {
 // ─────────────────────────────────────
 app.get("/api/posts", requireDb, async (req, res) => {
   const list = await Post.find().sort({ postId: -1 }).lean();
-  res.json(list.map(({ _id, __v, postId, ...rest }) => ({ id: postId, ...rest })));
+  res.json(list.map(({ _id, __v, postId, ...rest }) => ({ postId, ...rest })));
 });
 
 app.get("/api/posts/:id", requireDb, async (req, res) => {
   const p = await Post.findOne({ postId: Number(req.params.id) }).lean();
   if (!p) return res.status(404).json({ error: "not found" });
   const { _id, __v, postId, ...rest } = p;
-  res.json({ id: postId, ...rest });
+  res.json({ postId, ...rest });
 });
 
 app.post("/api/posts", requireDb, async (req, res) => {
@@ -1684,7 +1684,7 @@ app.post("/api/posts", requireDb, async (req, res) => {
       ...req.body,
     });
     const { _id, __v, postId: pid, ...rest } = doc.toObject();
-    res.status(201).json({ id: pid, ...rest });
+    res.status(201).json({ postId: pid, ...rest });
   } catch (e) {
     res.status(400).json({ error: e.message });
   }

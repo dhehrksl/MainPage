@@ -72,7 +72,7 @@ const Content = () => {
       expectedResult: tc.expectedResult || "", status: tc.status,
       priority: tc.priority || "Medium", category: tc.category || "",
     });
-    setEditingId(tc.id);
+    setEditingId(tc.tcId);
     setShowForm(true);
   };
 
@@ -189,7 +189,7 @@ const Content = () => {
 
   const handleExportExcel = () => {
     const exportData = testcases.map((tc) => ({
-      "TC ID": tc.id,
+      "TC ID": tc.tcId,
       "TC명": tc.title,
       "설명": tc.description,
       "기대결과": tc.expectedResult,
@@ -368,8 +368,8 @@ const Content = () => {
                 <th style={{ textAlign: "center", width: 40 }}>
                   <input
                     type="checkbox"
-                    checked={filtered.length > 0 && filtered.every((tc) => selectedRows.has(tc.id))}
-                    onChange={() => toggleSelectAll(filtered.map((tc) => tc.id))}
+                    checked={filtered.length > 0 && filtered.every((tc) => selectedRows.has(tc.tcId))}
+                    onChange={() => toggleSelectAll(filtered.map((tc) => tc.tcId))}
                     title="전체 선택"
                   />
                 </th>
@@ -384,10 +384,10 @@ const Content = () => {
             </thead>
             <tbody>
               {filtered.map((tc) => {
-                const isExpanded = expandedId === tc.id;
+                const isExpanded = expandedId === tc.tcId;
                 return (
-                  <React.Fragment key={tc.id}>
-                    <ExpandableRow $expanded={isExpanded} onClick={() => toggleExpanded(tc.id)}>
+                  <React.Fragment key={tc.tcId}>
+                    <ExpandableRow $expanded={isExpanded} onClick={() => toggleExpanded(tc.tcId)}>
                       <td style={{ textAlign: "center", color: colors.textSecondary }}>
                         <span className="material-icons" style={{ fontSize: 18 }}>
                           {isExpanded ? "expand_more" : "chevron_right"}
@@ -396,18 +396,18 @@ const Content = () => {
                       <td style={{ textAlign: "center" }} onClick={(e) => e.stopPropagation()}>
                         <input
                           type="checkbox"
-                          checked={selectedRows.has(tc.id)}
-                          onChange={() => toggleRow(tc.id)}
+                          checked={selectedRows.has(tc.tcId)}
+                          onChange={() => toggleRow(tc.tcId)}
                         />
                       </td>
-                      <td style={{ fontFamily: "monospace", fontSize: "0.85rem" }}>{tc.id}</td>
+                      <td style={{ fontFamily: "monospace", fontSize: "0.85rem" }}>{tc.tcId}</td>
                       <td style={{ fontWeight: 500 }}>{tc.title}</td>
                       <td>{tc.category || "-"}</td>
                       <td>{priorityBadge(tc.priority || "Medium")}</td>
                       <td onClick={(e) => e.stopPropagation()}>
                         <Select
                           value={tc.status}
-                          onChange={(e) => handleStatusChange(tc.id, e.target.value)}
+                          onChange={(e) => handleStatusChange(tc.tcId, e.target.value)}
                           style={{ padding: "4px 8px", fontSize: "0.8rem", border: "none", background: "transparent", fontWeight: 600 }}
                         >
                           {STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
@@ -416,8 +416,8 @@ const Content = () => {
                       <td style={{ textAlign: "center" }} onClick={(e) => e.stopPropagation()}>
                         {Array.isArray(tc.actions) && tc.actions.length > 0 ? (
                           <Flex $justify="center" $gap="6px">
-                            <ActionBtn onClick={() => handleRun(tc.id)} title="자동 실행" disabled={runningIds.has(tc.id)}>
-                              <span className="material-icons">{runningIds.has(tc.id) ? "hourglass_top" : "play_circle"}</span>
+                            <ActionBtn onClick={() => handleRun(tc.tcId)} title="자동 실행" disabled={runningIds.has(tc.tcId)}>
+                              <span className="material-icons">{runningIds.has(tc.tcId) ? "hourglass_top" : "play_circle"}</span>
                             </ActionBtn>
                             {tc.lastRunStatus && <RunBadge $status={tc.lastRunStatus}>{tc.lastRunStatus}</RunBadge>}
                           </Flex>
@@ -430,7 +430,7 @@ const Content = () => {
                           <ActionBtn onClick={() => handleEdit(tc)} title="수정">
                             <span className="material-icons">edit</span>
                           </ActionBtn>
-                          <ActionBtn onClick={() => handleDelete(tc.id)} title="삭제" $danger>
+                          <ActionBtn onClick={() => handleDelete(tc.tcId)} title="삭제" $danger>
                             <span className="material-icons">delete</span>
                           </ActionBtn>
                         </Flex>
@@ -455,19 +455,19 @@ const Content = () => {
                                   <RunBadge $status={tc.lastRunStatus}>{tc.lastRunStatus}</RunBadge>
                                   {tc.lastRunAt && <span style={{ marginLeft: 8, color: colors.textSecondary, fontSize: "0.8rem" }}>{new Date(tc.lastRunAt).toLocaleString("ko-KR")}</span>}
                                   {tc.lastRunMessage && <div style={{ marginTop: 6 }}>{tc.lastRunMessage}</div>}
-                                  {(tc.lastRunDiagnosis || runResults[tc.id]?.aiDiagnosis) && (
+                                  {(tc.lastRunDiagnosis || runResults[tc.tcId]?.aiDiagnosis) && (
                                     <AiDiagnosisBox>
                                       <span className="material-icons" style={{ fontSize: 16, verticalAlign: "-3px" }}>smart_toy</span>
-                                      {" "}{runResults[tc.id]?.aiDiagnosis || tc.lastRunDiagnosis}
+                                      {" "}{runResults[tc.tcId]?.aiDiagnosis || tc.lastRunDiagnosis}
                                     </AiDiagnosisBox>
                                   )}
                                 </DetailValue>
                               </DetailField>
                             )}
-                            {runResults[tc.id]?.screenshot && (
+                            {runResults[tc.tcId]?.screenshot && (
                               <DetailField>
                                 <DetailLabel>실패 스크린샷</DetailLabel>
-                                <ScreenshotImg src={`data:image/png;base64,${runResults[tc.id].screenshot}`} alt="실행 실패 스크린샷" />
+                                <ScreenshotImg src={`data:image/png;base64,${runResults[tc.tcId].screenshot}`} alt="실행 실패 스크린샷" />
                               </DetailField>
                             )}
                           </DetailPanel>

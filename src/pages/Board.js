@@ -30,7 +30,7 @@ const Board = () => {
     const matchSearch = p.title.toLowerCase().includes(searchTerm.toLowerCase())
       || (p.author || "").toLowerCase().includes(searchTerm.toLowerCase());
     return matchCat && matchSearch;
-  }).sort((a, b) => b.id - a.id);
+  }).sort((a, b) => b.postId - a.postId);
 
   return (
     <PageWrapper>
@@ -96,15 +96,15 @@ const Board = () => {
             </thead>
             <tbody>
               {filtered.map((post) => (
-                <tr key={post.id}>
-                  <td style={{ color: colors.textSecondary }}>{post.id}</td>
+                <tr key={post.postId}>
+                  <td style={{ color: colors.textSecondary }}>{post.postId}</td>
                   <td>
                     <Badge $color={post.category === "공지" ? "danger" : post.category === "질문" ? "info" : post.category === "공유" ? "success" : "gray"}>
                       {post.category || "기타"}
                     </Badge>
                   </td>
                   <td>
-                    <PostLink to={`/board/${post.id}`}>{post.title}</PostLink>
+                    <PostLink to={`/board/${post.postId}`}>{post.title}</PostLink>
                   </td>
                   <td>{post.author}</td>
                   <td style={{ color: colors.textSecondary, fontSize: "0.85rem" }}>{post.date}</td>

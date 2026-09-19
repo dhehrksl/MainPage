@@ -66,7 +66,7 @@ const Problem = () => {
       status: bug.status, assignee: bug.assignee || "",
       environment: bug.environment || "", relatedTC: bug.relatedTC || "",
     });
-    setEditingId(bug.id);
+    setEditingId(bug.bugId);
     setShowForm(true);
   };
 
@@ -247,11 +247,11 @@ const Problem = () => {
             </thead>
             <tbody>
               {filtered.map((bug) => {
-                const isOpen = expandedId === bug.id;
+                const isOpen = expandedId === bug.bugId;
                 return (
-                <React.Fragment key={bug.id}>
-                <tr onClick={() => setExpandedId(isOpen ? null : bug.id)} style={{ cursor: "pointer" }}>
-                  <td style={{ fontFamily: "monospace", fontSize: "0.85rem" }}>{bug.id}</td>
+                <React.Fragment key={bug.bugId}>
+                <tr onClick={() => setExpandedId(isOpen ? null : bug.bugId)} style={{ cursor: "pointer" }}>
+                  <td style={{ fontFamily: "monospace", fontSize: "0.85rem" }}>{bug.bugId}</td>
                   <td style={{ fontWeight: 500 }}>
                     {bug.title}
                     {bug.relatedTC && (
@@ -268,7 +268,7 @@ const Problem = () => {
                     </Badge>
                   </td>
                   <td onClick={(e) => e.stopPropagation()}>
-                    {verifyingId === bug.id ? (
+                    {verifyingId === bug.bugId ? (
                       <span style={{ fontSize: "0.78rem", color: colors.textSecondary, display: "inline-flex", alignItems: "center", gap: 4 }}>
                         <span className="material-icons" style={{ fontSize: 14 }}>hourglass_top</span>
                         재검증 중...
@@ -276,7 +276,7 @@ const Problem = () => {
                     ) : (
                       <Select
                         value={bug.status}
-                        onChange={(e) => handleStatusChange(bug.id, e.target.value)}
+                        onChange={(e) => handleStatusChange(bug.bugId, e.target.value)}
                         disabled={!!verifyingId}
                         style={{ padding: "4px 8px", fontSize: "0.8rem", border: "none", background: "transparent", fontWeight: 600 }}
                       >
@@ -290,7 +290,7 @@ const Problem = () => {
                       <ActionBtn onClick={() => handleEdit(bug)} title="수정">
                         <span className="material-icons">edit</span>
                       </ActionBtn>
-                      <ActionBtn onClick={() => handleDelete(bug.id)} title="삭제" $danger>
+                      <ActionBtn onClick={() => handleDelete(bug.bugId)} title="삭제" $danger>
                         <span className="material-icons">delete</span>
                       </ActionBtn>
                     </Flex>

@@ -85,7 +85,7 @@ const Home = () => {
             ) : (
               recentTCs.map((tc, i) => (
                 <ActivityRow key={i}>
-                  <span>{tc.title || tc.id}</span>
+                  <span>{tc.title || tc.tcId}</span>
                   <Badge $color={tc.status === "Pass" ? "success" : tc.status === "Fail" ? "danger" : "gray"}>
                     {tc.status || "Pending"}
                   </Badge>

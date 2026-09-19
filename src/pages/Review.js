@@ -30,7 +30,7 @@ const Review = () => {
     setBugReportStatus((prev) => ({ ...prev, [runId]: "loading" }));
     try {
       const bug = await generateBugReport(runId);
-      setBugReportStatus((prev) => ({ ...prev, [runId]: { bugId: bug.id } }));
+      setBugReportStatus((prev) => ({ ...prev, [runId]: { bugId: bug.bugId } }));
       await reload();
     } catch (err) {
       setBugReportStatus((prev) => ({ ...prev, [runId]: { error: err.message || "생성 실패" } }));
@@ -123,7 +123,7 @@ const Review = () => {
     }
     return [...map.entries()]
       .map(([tcId, bgs]) => {
-        const tc = testcases.find((t) => t.id === tcId);
+        const tc = testcases.find((t) => t.tcId === tcId);
         return { tcId, tcTitle: tc?.title || "(삭제됨)", tcStatus: tc?.status, bugs: bgs };
       })
       .sort((a, b) => b.bugs.length - a.bugs.length);
@@ -156,7 +156,7 @@ const Review = () => {
     ];
 
     const tcData = filtered.map((tc) => ({
-      "TC ID": tc.id, "TC명": tc.title, "카테고리": tc.category || "-",
+      "TC ID": tc.tcId, "TC명": tc.title, "카테고리": tc.category || "-",
       "상태": tc.status, "우선순위": tc.priority || "-",
     }));
 
@@ -174,7 +174,7 @@ const Review = () => {
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(categoryData), "카테고리별");
     if (bugs.length > 0) {
       const bugData = bugs.map((b) => ({
-        "버그 ID": b.id, "제목": b.title, "심각도": b.severity,
+        "버그 ID": b.bugId, "제목": b.title, "심각도": b.severity,
         "상태": b.status, "담당자": b.assignee || "-", "관련 TC": b.relatedTC || "-",
       }));
       XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(bugData), "버그 목록");
@@ -340,10 +340,10 @@ const Review = () => {
                   <Card>
                     <CardTitle>Fail TC 목록 ({stats.fail}건)</CardTitle>
                     {filtered.filter((t) => t.status === "Fail").map((tc) => (
-                      <FailRow key={tc.id}>
+                      <FailRow key={tc.tcId}>
                         <Flex $gap="10px">
                           <Badge $color="danger">Fail</Badge>
-                          <span style={{ fontFamily: "monospace", fontSize: "0.8rem", color: colors.textSecondary }}>{tc.id}</span>
+                          <span style={{ fontFamily: "monospace", fontSize: "0.8rem", color: colors.textSecondary }}>{tc.tcId}</span>
                           <span style={{ fontWeight: 500 }}>{tc.title}</span>
                         </Flex>
                         <Badge $color={tc.priority === "High" ? "danger" : tc.priority === "Medium" ? "warning" : "info"}>
@@ -491,8 +491,8 @@ const Review = () => {
                     </Flex>
                     <div>
                       {l.bugs.map((b) => (
-                        <LinkedBug key={b.id}>
-                          <span style={{ fontFamily: "monospace", fontSize: "0.8rem", color: colors.textSecondary }}>{b.id}</span>
+                        <LinkedBug key={b.bugId}>
+                          <span style={{ fontFamily: "monospace", fontSize: "0.8rem", color: colors.textSecondary }}>{b.bugId}</span>
                           <span style={{ flex: 1 }}>{b.title}</span>
                           <Badge $color={b.severity === "Critical" ? "danger" : b.severity === "Major" ? "warning" : "info"}>
                             {b.severity}

@@ -85,7 +85,7 @@ export const createTestcase = async (tc) => {
     const local = readLS(TC_KEY);
     const newTC = {
       ...tc,
-      id: `TC-${String(local.length + 1).padStart(4, "0")}`,
+      tcId: `TC-${String(local.length + 1).padStart(4, "0")}`,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -98,13 +98,13 @@ export const updateTestcase = async (id, patch) => {
   try {
     const saved = await request(`/api/testcases/${id}`, { method: "PUT", body: JSON.stringify(patch) });
     const local = readLS(TC_KEY);
-    writeLS(TC_KEY, local.map((t) => (t.id === id ? saved : t)));
+    writeLS(TC_KEY, local.map((t) => (t.tcId === id ? saved : t)));
     return { data: saved, source: "db" };
   } catch {
     const local = readLS(TC_KEY);
-    const updated = local.map((t) => (t.id === id ? { ...t, ...patch, updatedAt: new Date().toISOString() } : t));
+    const updated = local.map((t) => (t.tcId === id ? { ...t, ...patch, updatedAt: new Date().toISOString() } : t));
     writeLS(TC_KEY, updated);
-    return { data: updated.find((t) => t.id === id), source: "local" };
+    return { data: updated.find((t) => t.tcId === id), source: "local" };
   }
 };
 
@@ -113,7 +113,7 @@ export const deleteTestcase = async (id) => {
     await request(`/api/testcases/${id}`, { method: "DELETE" });
   } catch { /* DB 없으면 로컬만 삭제 */ }
   const local = readLS(TC_KEY);
-  writeLS(TC_KEY, local.filter((t) => t.id !== id));
+  writeLS(TC_KEY, local.filter((t) => t.tcId !== id));
 };
 
 export const bulkImportTestcases = async (rows) => {
@@ -126,7 +126,7 @@ export const bulkImportTestcases = async (rows) => {
     const local = readLS(TC_KEY);
     const imported = rows.map((r, i) => ({
       ...r,
-      id: `TC-${String(local.length + i + 1).padStart(4, "0")}`,
+      tcId: `TC-${String(local.length + i + 1).padStart(4, "0")}`,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     }));
@@ -174,7 +174,7 @@ export const createBug = async (bug) => {
     const local = readLS(BUG_KEY);
     const newBug = {
       ...bug,
-      id: `BUG-${String(local.length + 1).padStart(4, "0")}`,
+      bugId: `BUG-${String(local.length + 1).padStart(4, "0")}`,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -187,20 +187,20 @@ export const updateBug = async (id, patch) => {
   try {
     const saved = await request(`/api/bugs/${id}`, { method: "PUT", body: JSON.stringify(patch) });
     const local = readLS(BUG_KEY);
-    writeLS(BUG_KEY, local.map((b) => (b.id === id ? saved : b)));
+    writeLS(BUG_KEY, local.map((b) => (b.bugId === id ? saved : b)));
     return { data: saved, source: "db" };
   } catch {
     const local = readLS(BUG_KEY);
-    const updated = local.map((b) => (b.id === id ? { ...b, ...patch, updatedAt: new Date().toISOString() } : b));
+    const updated = local.map((b) => (b.bugId === id ? { ...b, ...patch, updatedAt: new Date().toISOString() } : b));
     writeLS(BUG_KEY, updated);
-    return { data: updated.find((b) => b.id === id), source: "local" };
+    return { data: updated.find((b) => b.bugId === id), source: "local" };
   }
 };
 
 export const deleteBug = async (id) => {
   try { await request(`/api/bugs/${id}`, { method: "DELETE" }); } catch {}
   const local = readLS(BUG_KEY);
-  writeLS(BUG_KEY, local.filter((b) => b.id !== id));
+  writeLS(BUG_KEY, local.filter((b) => b.bugId !== id));
 };
 
 // ───────── Posts (게시판) ─────────
@@ -222,7 +222,7 @@ export const fetchPost = async (id) => {
     return { data, source: "db" };
   } catch {
     const posts = readLS(POST_KEY);
-    return { data: posts.find((p) => String(p.id) === String(id)), source: "local" };
+    return { data: posts.find((p) => String(p.postId) === String(id)), source: "local" };
   }
 };
 
@@ -234,10 +234,10 @@ export const createPost = async (post) => {
     return { data: saved, source: "db" };
   } catch {
     const local = readLS(POST_KEY);
-    const maxId = local.reduce((m, p) => Math.max(m, p.id || 0), 0);
+    const maxId = local.reduce((m, p) => Math.max(m, p.postId || 0), 0);
     const newPost = {
       ...post,
-      id: maxId + 1,
+      postId: maxId + 1,
       date: new Date().toISOString().slice(0, 10),
     };
     writeLS(POST_KEY, [...local, newPost]);
@@ -248,7 +248,7 @@ export const createPost = async (post) => {
 export const deletePost = async (id) => {
   try { await request(`/api/posts/${id}`, { method: "DELETE" }); } catch {}
   const local = readLS(POST_KEY);
-  writeLS(POST_KEY, local.filter((p) => String(p.id) !== String(id)));
+  writeLS(POST_KEY, local.filter((p) => String(p.postId) !== String(id)));
 };
 
 // ───────── Utterances ─────────
