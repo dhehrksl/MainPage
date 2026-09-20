@@ -281,6 +281,81 @@ const PUPPETEER_SAFE_ARGS = [
   "--single-process",
 ];
 
+// ── 브라우저 대기열 ──
+// 서버 RAM이 1GB라 Chrome을 여러 개 동시에 띄우면 메모리가 바닥나 타임아웃/프로세스 강제 종료가 난다.
+// 브라우저를 쓰는 작업(TC 실행, 즉석 테스트, 페이지 스크레이핑)은 전부 이 슬롯을 거쳐서
+// 한 번에 BROWSER_SLOT_LIMIT개까지만 돌고, 나머지는 죽지 않고 줄 서서 기다린다.
+const BROWSER_SLOT_LIMIT = Number(process.env.BROWSER_SLOT_LIMIT) || 1;
+const BROWSER_QUEUE_MAX = Number(process.env.BROWSER_QUEUE_MAX) || 8;
+let browserActive = 0;
+const browserWaiters = [];
+
+const acquireBrowserSlot = async () => {
+  if (browserActive < BROWSER_SLOT_LIMIT) {
+    browserActive++;
+    return;
+  }
+  console.log(`⏳ 브라우저 대기열 진입 (앞에 ${browserWaiters.length + 1}건 대기)`);
+  // 슬롯을 넘겨받는 쪽에서는 browserActive를 올리지 않는다 — release가 감소 없이 그대로 넘겨주므로
+  // 그 사이에 끼어든 새 요청이 슬롯을 가로채 한도를 넘기는 일이 없다.
+  await new Promise((resolve) => browserWaiters.push(resolve));
+};
+
+const releaseBrowserSlot = () => {
+  const next = browserWaiters.shift();
+  if (next) next();
+  else browserActive--;
+};
+
+const withBrowserSlot = async (fn) => {
+  await acquireBrowserSlot();
+  try {
+    return await fn();
+  } finally {
+    releaseBrowserSlot();
+  }
+};
+
+// ── 사용자별 사용 제한 ──
+// 무료 Gemini 한도와 서버 자원을 한 사람이 다 쓰지 못하게 한다. 브라우저/AI를 쓰는 무거운 API에만 건다.
+//  - 동시에 처리 중인 요청은 사용자당 HEAVY_MAX_INFLIGHT개까지
+//  - 시간당 HEAVY_LIMIT_PER_HOUR회까지
+//  - 브라우저 대기열이 가득 찼으면 새 요청은 받지 않고 잠시 뒤 재시도를 안내
+const HEAVY_LIMIT_PER_HOUR = Number(process.env.HEAVY_LIMIT_PER_HOUR) || 40;
+const HEAVY_MAX_INFLIGHT = Number(process.env.HEAVY_MAX_INFLIGHT) || 3;
+const heavyUsage = new Map(); // userId -> { times: number[], inflight: number }
+
+const heavyGuard = (req, res, next) => {
+  if (browserWaiters.length >= BROWSER_QUEUE_MAX) {
+    return res.status(503).json({ error: "현재 요청이 많아 대기열이 가득 찼습니다. 1~2분 뒤 다시 시도해주세요." });
+  }
+  const uid = req.user?.sub || req.ip;
+  const now = Date.now();
+  const usage = heavyUsage.get(uid) || { times: [], inflight: 0 };
+  usage.times = usage.times.filter((t) => now - t < 60 * 60 * 1000);
+
+  if (usage.inflight >= HEAVY_MAX_INFLIGHT) {
+    return res.status(429).json({ error: "이전에 보낸 요청이 아직 처리 중입니다. 끝난 뒤 다시 시도해주세요." });
+  }
+  if (usage.times.length >= HEAVY_LIMIT_PER_HOUR) {
+    return res.status(429).json({ error: `시간당 사용 한도(${HEAVY_LIMIT_PER_HOUR}회)를 넘었습니다. 잠시 후 다시 시도해주세요.` });
+  }
+
+  usage.times.push(now);
+  usage.inflight++;
+  heavyUsage.set(uid, usage);
+
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true;
+    usage.inflight = Math.max(0, usage.inflight - 1);
+  };
+  res.on("finish", release);
+  res.on("close", release);
+  next();
+};
+
 // 화면에 실제로 "보이고 클릭 가능한" 요소 중 text를 포함하는 걸 찾아 elementHandle을 돌려준다.
 // 모달/오버레이에 가려졌거나 화면 밖으로 밀려난 요소는 DOM에는 남아있어도 실제로
 // 클릭할 수 없으므로 후보에서 제외한다 — 그래야 AI가 이미 가려져서 실패한 대상을
@@ -417,7 +492,7 @@ const performAction = async (page, action, index) => {
 
 // TC 하나를 실제로 실행해서 { status, message, screenshot, durationMs }를 돌려준다.
 // 절대 throw하지 않는다 — 실행 자체의 실패도 결과(Error 상태)로 정상 반환한다.
-const runTestcase = async (tc) => {
+const runTestcaseUnqueued = async (tc) => {
   const startedAt = Date.now();
   if (!tc.sourceUrl || !Array.isArray(tc.actions) || tc.actions.length === 0) {
     return { status: "Error", message: "이 TC는 자동 실행 정보(sourceUrl/actions)가 없습니다. URL→TC 생성으로 만든 TC만 실행 가능합니다.", screenshot: null, durationMs: 0 };
@@ -467,6 +542,9 @@ const runTestcase = async (tc) => {
     }
   }
 };
+
+// 실제 호출은 항상 대기열을 거친다 (브라우저 동시 실행 제한).
+const runTestcase = (tc) => withBrowserSlot(() => runTestcaseUnqueued(tc));
 
 // 실패한 실행 결과를 Gemini에게 보여주고 원인과 다음 액션을 짧게 설명받는다.
 // 진단 자체가 실패해도(쿼터 초과 등) 절대 throw하지 않는다 — 진단은 부가 정보일 뿐,
@@ -919,7 +997,7 @@ const extractPageInfo = (page) =>
     };
   });
 
-const scrapePage = async (url, useScreenshot) => {
+const scrapePageUnqueued = async (url, useScreenshot) => {
   let browser;
   try {
     browser = await puppeteer.launch({ headless: true, args: PUPPETEER_SAFE_ARGS });
@@ -993,7 +1071,7 @@ const settleAfterAction = async (page) => {
   await new Promise((r) => setTimeout(r, 400));
 };
 
-const runAgenticNlTest = async (url, instruction) => {
+const runAgenticNlTestUnqueued = async (url, instruction) => {
   const startedAt = Date.now();
   const history = []; // { action, outcome }
   const executedActions = []; // 저장/재실행용 — finish/실패한 시도는 제외한 성공한 액션만
@@ -1135,11 +1213,15 @@ ${history.length ? history.map((h, i) => `${i + 1}. ${describeAgentAction(h.acti
   }
 };
 
+// 실제 호출은 항상 대기열을 거친다 (브라우저 동시 실행 제한).
+const scrapePage = (url, useScreenshot) => withBrowserSlot(() => scrapePageUnqueued(url, useScreenshot));
+const runAgenticNlTest = (url, instruction) => withBrowserSlot(() => runAgenticNlTestUnqueued(url, instruction));
+
 // TC 생성은 Puppeteer 인스턴스를 띄우므로 동시 실행 1개로 제한한다.
 // 서버 RAM(1 GB)에서 Puppeteer 2개 동시 실행은 메모리 부족 → 타임아웃으로 이어진다.
 let tcGenerationBusy = false;
 
-app.post("/api/tc-from-url", async (req, res) => {
+app.post("/api/tc-from-url", heavyGuard, async (req, res) => {
   const { url, numTCs = 10, useScreenshot = false } = req.body;
 
   if (!url || typeof url !== "string") {
@@ -1376,7 +1458,7 @@ const looksLikeComparisonRequest = (text) => {
 // 그 자리에서 실행까지 끝내고 결과를 보여준다. URL→TC 생성(여러 개를 뽑아
 // 목록에 저장)과 달리, 딱 하나를 즉시 만들어서 바로 실행하는 용도다.
 // ─────────────────────────────────────
-app.post("/api/nl-test", async (req, res) => {
+app.post("/api/nl-test", heavyGuard, async (req, res) => {
   const { url, instruction } = req.body;
 
   if (!url || typeof url !== "string" || !/^https?:\/\//i.test(url)) {
@@ -1496,7 +1578,7 @@ app.post("/api/testcases/bulk", requireDb, async (req, res) => {
 // ─────────────────────────────────────
 
 // 하나의 TC를 실제로 실행하고, 결과를 TC 문서(캐시)와 TestRun(이력)에 같이 기록한다.
-app.post("/api/testcases/:id/run", requireDb, async (req, res) => {
+app.post("/api/testcases/:id/run", requireDb, heavyGuard, async (req, res) => {
   const tc = await Testcase.findOne({ tcId: req.params.id }).lean();
   if (!tc) return res.status(404).json({ error: "not found" });
 
@@ -1534,7 +1616,7 @@ app.post("/api/testcases/:id/run", requireDb, async (req, res) => {
 
 // 여러 TC를 순서대로(동시 실행 아님 — 서버 메모리가 작아서 한 번에 하나씩) 실행한다.
 // ids를 안 주면 actions가 있는 TC 전체를 실행한다.
-app.post("/api/testcases/run-batch", requireDb, async (req, res) => {
+app.post("/api/testcases/run-batch", requireDb, heavyGuard, async (req, res) => {
   const { ids } = req.body || {};
   const query = Array.isArray(ids) && ids.length > 0
     ? { tcId: { $in: ids } }
@@ -1586,7 +1668,7 @@ app.get("/api/test-runs", requireDb, async (req, res) => {
 });
 
 // 실패/에러로 끝난 실행 기록 하나를 골라 AI가 정식 버그 리포트를 작성하고 Bugs 목록에 바로 등록한다.
-app.post("/api/test-runs/:id/bug-report", requireDb, async (req, res) => {
+app.post("/api/test-runs/:id/bug-report", requireDb, heavyGuard, async (req, res) => {
   try {
     const run = await TestRun.findById(req.params.id).lean();
     if (!run) return res.status(404).json({ error: "실행 기록을 찾을 수 없습니다." });
