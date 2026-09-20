@@ -492,6 +492,12 @@ TC 설명: ${tc.description}
   }
 };
 
+// 자동 실행 결과를 TC의 대표 상태(status)에도 반영한다. 리포트/대시보드는 status로 집계하는데
+// 자동 실행은 lastRunStatus에만 기록해서, 실행이 Pass여도 리포트에는 Pending으로 남아 있었다.
+// Error는 "실행 자체를 못 함"이라 Fail이 아니라 Blocked로 둔다.
+const tcStatusFromRun = (runStatus) =>
+  runStatus === "Pass" ? "Pass" : runStatus === "Fail" ? "Fail" : "Blocked";
+
 const BUG_SEVERITY_OPTIONS = ["Critical", "Major", "Minor", "Trivial"];
 const BUG_PRIORITY_BY_SEVERITY = { Critical: "Urgent", Major: "High", Minor: "Medium", Trivial: "Low" };
 
@@ -1504,7 +1510,7 @@ app.post("/api/testcases/:id/run", requireDb, async (req, res) => {
 
   await Testcase.updateOne(
     { tcId: req.params.id },
-    { $set: { lastRunStatus: result.status, lastRunAt: new Date(), lastRunMessage: result.message || "", lastRunDiagnosis: diagnosis } }
+    { $set: { status: tcStatusFromRun(result.status), lastRunStatus: result.status, lastRunAt: new Date(), lastRunMessage: result.message || "", lastRunDiagnosis: diagnosis } }
   );
   await TestRun.create({
     tcId: req.params.id,
@@ -1546,7 +1552,7 @@ app.post("/api/testcases/run-batch", requireDb, async (req, res) => {
 
     await Testcase.updateOne(
       { tcId: tc.tcId },
-      { $set: { lastRunStatus: result.status, lastRunAt: new Date(), lastRunMessage: result.message || "", lastRunDiagnosis: diagnosis } }
+      { $set: { status: tcStatusFromRun(result.status), lastRunStatus: result.status, lastRunAt: new Date(), lastRunMessage: result.message || "", lastRunDiagnosis: diagnosis } }
     );
     await TestRun.create({
       tcId: tc.tcId,
@@ -1661,7 +1667,7 @@ app.put("/api/bugs/:id", requireDb, async (req, res) => {
 
         await Testcase.updateOne(
           { tcId: tc.tcId },
-          { $set: { lastRunStatus: result.status, lastRunAt: new Date(), lastRunMessage: result.message || "", lastRunDiagnosis: diagnosis } }
+          { $set: { status: tcStatusFromRun(result.status), lastRunStatus: result.status, lastRunAt: new Date(), lastRunMessage: result.message || "", lastRunDiagnosis: diagnosis } }
         );
         await TestRun.create({
           tcId: tc.tcId,
