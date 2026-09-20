@@ -32,7 +32,16 @@ const GenerateTC = () => {
   const [result, setResult] = useState(null); // { url, pageTitle, testcases, meta }
   const [selectedIdx, setSelectedIdx] = useState(new Set());
 
-  // 경과 시간 카운터
+  // 자연어 즉석 테스트
+  const [nlUrl, setNlUrl] = useState("");
+  const [nlInstruction, setNlInstruction] = useState("");
+  const [nlLoading, setNlLoading] = useState(false);
+  const [nlError, setNlError] = useState("");
+  const [nlResult, setNlResult] = useState(null);
+  const [nlSaving, setNlSaving] = useState(false);
+  const [nlSaved, setNlSaved] = useState(false);
+
+  // 경과 시간 카운터 (위 loading/nlLoading state가 먼저 선언돼 있어야 의존성 배열에서 참조 가능)
   const [elapsed, setElapsed] = useState(0);
   const [nlElapsed, setNlElapsed] = useState(0);
   const elapsedRef = useRef(null);
@@ -57,15 +66,6 @@ const GenerateTC = () => {
     }
     return () => clearInterval(nlElapsedRef.current);
   }, [nlLoading]);
-
-  // 자연어 즉석 테스트
-  const [nlUrl, setNlUrl] = useState("");
-  const [nlInstruction, setNlInstruction] = useState("");
-  const [nlLoading, setNlLoading] = useState(false);
-  const [nlError, setNlError] = useState("");
-  const [nlResult, setNlResult] = useState(null);
-  const [nlSaving, setNlSaving] = useState(false);
-  const [nlSaved, setNlSaved] = useState(false);
 
   // overrideUrl/overrideInstruction이 오면(데모 프리셋 클릭) state 업데이트를 기다리지 않고 바로 그 값으로 실행한다.
   const handleNlTest = async (overrideUrl, overrideInstruction) => {
