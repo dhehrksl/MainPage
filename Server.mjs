@@ -52,19 +52,55 @@ const FREE_MODEL_FALLBACKS = [
   "gemma-4-31b-it",
 ];
 
+// 쿼터가 소진된 모델을 기억해뒀다가 일정 시간 건너뛴다. 안 그러면 1번 모델이 오늘치를
+// 다 썼어도 매 호출마다 1번에 먼저 요청을 보내고 실패한 뒤에야 다음 모델로 넘어간다.
+const modelCooldownUntil = new Map(); // modelName -> 다시 시도해도 되는 시각(ms)
+
+// 실패 원인별로 얼마나 쉬게 할지 정한다. 0이면 건너뛰지 않는다.
+// 400 같은 요청 자체의 문제는 모델 탓이 아니라서 쿨다운을 걸지 않는다.
+const cooldownMsFor = (err) => {
+  if (err.status === 429) {
+    const details = err.errorDetails || [];
+    const isDaily = details.some((d) =>
+      (d?.violations || []).some((v) => /PerDay/i.test(v?.quotaId || ""))
+    );
+    if (isDaily) return 60 * 60 * 1000; // 일일 한도 소진 — 1시간 뒤 다시 확인
+    const retry = details.find((d) => d?.["@type"]?.includes("RetryInfo"))?.retryDelay;
+    const sec = parseFloat(retry) || 60; // "33s" 형태
+    return Math.min(Math.max(sec, 30), 300) * 1000;
+  }
+  if (err.status === 404) return 30 * 60 * 1000; // 이 키로 접근 불가한 모델
+  if (err.status === 503) return 30 * 1000; // 일시적 과부하
+  return 0;
+};
+
 // prompt(문자열 또는 parts 배열)를 위 목록 순서대로 시도한다.
 // 하나가 실패(쿼터 초과, 일시적 오류 등)하면 바로 다음 모델로 넘어가고,
 // 전부 실패해야만 마지막 에러를 던져서 각 라우트의 기존 에러 분류 로직이 처리하게 한다.
+// 쿨다운 중인 모델은 맨 뒤로 미룬다 — 건너뛰기만 하면 쿨다운 추정이 틀렸을 때
+// (예: 한도가 이미 풀렸는데 못 쓰는 경우) 쓸 수 있는 모델이 있어도 실패하게 되므로,
+// 나머지가 다 실패한 뒤 마지막 수단으로는 쿨다운 모델도 시도한다.
 const generateContentWithFallback = async (parts) => {
+  const now = Date.now();
+  const active = FREE_MODEL_FALLBACKS.filter((m) => (modelCooldownUntil.get(m) || 0) <= now);
+  const cooling = FREE_MODEL_FALLBACKS.filter((m) => (modelCooldownUntil.get(m) || 0) > now);
+
   let lastErr;
-  for (const modelName of FREE_MODEL_FALLBACKS) {
+  for (const modelName of [...active, ...cooling]) {
     try {
       const model = genAI.getGenerativeModel({ model: modelName });
       const result = await model.generateContent(parts);
       const response = await result.response;
+      modelCooldownUntil.delete(modelName);
       return { response, modelUsed: modelName };
     } catch (err) {
-      console.warn(`⚠️  모델 [${modelName}] 실패 — 다음 모델로 전환: ${err.message}`);
+      const cooldown = cooldownMsFor(err);
+      if (cooldown > 0) {
+        modelCooldownUntil.set(modelName, Date.now() + cooldown);
+        console.warn(`⚠️  모델 [${modelName}] 실패 — ${Math.round(cooldown / 60000) || "<1"}분간 건너뜀, 다음 모델로 전환 (${err.status || "오류"})`);
+      } else {
+        console.warn(`⚠️  모델 [${modelName}] 실패 — 다음 모델로 전환: ${err.message}`);
+      }
       lastErr = err;
     }
   }
