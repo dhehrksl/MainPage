@@ -391,12 +391,19 @@ const performAction = async (page, action, index) => {
         throw new Error(`"${action.text}" 텍스트가 화면에 없음`);
       }
     } else if (action.type === "assertUrlChange") {
-      // 클릭 직후 페이지 이동이 아직 진행 중일 수 있으므로 최대 8초간 폴링
-      const deadline = Date.now() + 8000;
-      while (page.url() === action.beforeUrl && Date.now() < deadline) {
+      // 클릭 직후 페이지 이동이 아직 진행 중일 수 있으므로 최대 15초간 폴링한다.
+      // target="_blank" 링크는 원래 탭의 URL이 그대로고 새 탭이 열리기 때문에,
+      // 원래 탭만 보면 정상 동작을 "이동 안 됨"으로 오판정한다. 새 탭이 열린 것도 이동으로 본다.
+      const hasMoved = async () => {
+        if (page.url() !== action.beforeUrl) return true;
+        const pages = await page.browser().pages();
+        return pages.some((p) => p !== page && p.url() !== "about:blank");
+      };
+      const deadline = Date.now() + 15000;
+      while (!(await hasMoved()) && Date.now() < deadline) {
         await new Promise((r) => setTimeout(r, 300));
       }
-      if (page.url() === action.beforeUrl) {
+      if (!(await hasMoved())) {
         throw new Error("URL이 이전과 동일함 (페이지 이동 안 됨)");
       }
     } else {
