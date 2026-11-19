@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import styled from "styled-components";
 import { colors } from "../styles/theme";
 import { useAuth } from "../context/AuthContext";
+import { registerVisit } from "../api/client";
 
 // 이 폭 이하에서는 사이드바가 기본 숨김 + 슬라이드 드로어로 전환된다.
 const MOBILE_BREAKPOINT = "860px";
@@ -26,6 +27,17 @@ const Navbar = () => {
     logout();
     navigate("/login", { replace: true });
   };
+
+  const [visits, setVisits] = useState(null); // 누적 방문자 수
+
+  useEffect(() => {
+    if (!user) return undefined;
+    let alive = true;
+    registerVisit()
+      .then((r) => alive && setVisits(r.total))
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [user]);
 
   const closeDrawer = () => setOpen(false);
 
@@ -62,6 +74,12 @@ const Navbar = () => {
               <span className="material-icons" style={{ fontSize: 18 }}>account_circle</span>
               <UserEmail title={user.email}>{user.name || user.email}</UserEmail>
             </UserRow>
+          )}
+          {visits != null && (
+            <OnlineRow>
+              <OnlineDot />
+              누적 방문자 {visits.toLocaleString()}명
+            </OnlineRow>
           )}
           <LogoutBtn onClick={handleLogout}>
             <span className="material-icons" style={{ fontSize: 16 }}>logout</span>
@@ -200,6 +218,22 @@ const UserEmail = styled.span`
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+`;
+
+const OnlineRow = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-size: 0.8rem;
+  color: ${colors.lightGray};
+`;
+
+const OnlineDot = styled.span`
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #22c55e;
 `;
 
 const LogoutBtn = styled.button`

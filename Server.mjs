@@ -692,6 +692,30 @@ app.get("/api/auth/me", requireAuth, async (req, res) => {
 app.use(requireAuth);
 
 // ─────────────────────────────────────
+// 누적 방문자 수
+// 로그인한 사용자가 브라우저 세션당 한 번 POST /api/visits 를 호출하면 카운터를 1 올린다.
+// (같은 탭에서 새로고침해도 중복 집계하지 않는다 — 프론트가 sessionStorage로 막는다.)
+// ─────────────────────────────────────
+const VisitCounter = mongoose.model(
+  "VisitCounter",
+  new mongoose.Schema({ _id: String, total: { type: Number, default: 0 } }, { versionKey: false })
+);
+
+app.get("/api/visits", requireDb, async (req, res) => {
+  const doc = await VisitCounter.findById("site").lean();
+  res.json({ total: doc?.total || 0 });
+});
+
+app.post("/api/visits", requireDb, async (req, res) => {
+  const doc = await VisitCounter.findByIdAndUpdate(
+    "site",
+    { $inc: { total: 1 } },
+    { upsert: true, new: true }
+  ).lean();
+  res.json({ total: doc.total });
+});
+
+// ─────────────────────────────────────
 // 5) Gemini 유사 발화 생성
 // ─────────────────────────────────────
 app.post("/generate", async (req, res) => {

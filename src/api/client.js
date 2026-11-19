@@ -60,6 +60,13 @@ export const loginUser = async (email, password) => {
 };
 
 // ───────── 상태 ─────────
+// 누적 방문자 수 — 브라우저 세션당 한 번만 집계(POST), 이미 집계했으면 조회만(GET)
+export const registerVisit = () => {
+  const counted = sessionStorage.getItem("qa_visit_counted");
+  if (counted) return request("/api/visits");
+  sessionStorage.setItem("qa_visit_counted", "1");
+  return request("/api/visits", { method: "POST" });
+};
 export const getHealth = () => request("/api/health");
 
 // ───────── Testcases ─────────
